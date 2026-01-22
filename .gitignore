@@ -38,3 +38,6 @@ uploads/
 
 # Runtime/artefatos (NÃO versionar)
 backend/storage/
+
+# dev: ignore local patches
+*.patch
