@@ -1,0 +1,208 @@
+/* HUB CLEAN — identidade IDEAL (branco + blur + roxo/azul) */
+
+.suashub-root{
+  min-height: 100vh;
+  background: radial-gradient(1200px 600px at 10% 10%, rgba(122,92,255,.14), transparent 55%),
+              radial-gradient(1200px 600px at 90% 20%, rgba(90,140,255,.12), transparent 55%),
+              linear-gradient(180deg, rgba(250,250,252,1), rgba(245,246,250,1));
+  padding: 28px 18px;
+}
+
+.suashub-container{
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.suashub-top{
+  display:flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  border-radius: 22px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,.70);
+  border: 1px solid rgba(0,0,0,.06);
+  box-shadow: 0 18px 60px rgba(0,0,0,.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.suashub-brand{
+  display:flex;
+  align-items:center;
+  gap: 12px;
+}
+.suashub-logo{
+  width: 120px;
+  height: auto;
+  display:block;
+}
+
+.suashub-brandText{
+  display:flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.suashub-tag{
+  display:inline-flex;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(122,92,255,.20);
+  background: rgba(122,92,255,.10);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: rgba(92,74,220,1);
+}
+.suashub-title{
+  font-size: 26px;
+  font-weight: 980;
+  line-height: 1.05;
+}
+.suashub-subtitle{
+  opacity: .72;
+  font-weight: 650;
+}
+
+.suashub-actions{
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items:center;
+  justify-content:flex-end;
+}
+.suashub-btn{
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(255,255,255,.85);
+  font-weight: 950;
+  cursor:pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,.08);
+  white-space: nowrap;
+}
+.suashub-btnPrimary{
+  border: 1px solid rgba(122,92,255,.25);
+  background: rgba(122,92,255,.95);
+  color: white;
+  box-shadow: 0 18px 50px rgba(122,92,255,.20);
+}
+
+.suashub-main{
+  margin-top: 18px;
+  display:grid;
+  gap: 18px;
+}
+
+.suashub-section{
+  border-radius: 26px;
+  padding: 18px;
+  background: rgba(255,255,255,.70);
+  border: 1px solid rgba(0,0,0,.06);
+  box-shadow: 0 18px 60px rgba(0,0,0,.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.suashub-sectionTitle{
+  font-size: 18px;
+  font-weight: 980;
+  margin-bottom: 12px;
+  display:flex;
+  align-items:center;
+  gap: 10px;
+}
+.suashub-badge{
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 950;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.75);
+  opacity: .9;
+}
+.suashub-grid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 980px){
+  .suashub-grid{ grid-template-columns: 1fr; }
+  .suashub-title{ font-size: 22px; }
+  .suashub-logo{ width: 110px; }
+}
+
+.suashub-card{
+  border-radius: 22px;
+  padding: 16px;
+  border: 1px solid rgba(0,0,0,.06);
+  background: rgba(255,255,255,.60);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.suashub-card:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 18px 50px rgba(0,0,0,.12);
+}
+
+.suashub-cardTop{
+  display:flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.suashub-cardName{
+  font-size: 18px;
+  font-weight: 980;
+}
+.suashub-cardDesc{
+  opacity: .78;
+  font-weight: 650;
+  margin-bottom: 12px;
+  min-height: 40px;
+}
+.suashub-pillActive{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(120,255,180,.16);
+  color: rgba(0,90,60,1);
+  font-weight: 950;
+}
+.suashub-pillSoon{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.70);
+  color: rgba(20,20,30,.6);
+  font-weight: 950;
+}
+
+.suashub-cardBtnRow{
+  display:flex;
+  gap:10px;
+  flex-wrap: wrap;
+}
+.suashub-cardBtn{
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(255,255,255,.85);
+  font-weight: 950;
+  cursor:pointer;
+}
+.suashub-cardBtnPrimary{
+  border: 1px solid rgba(122,92,255,.25);
+  background: rgba(122,92,255,.95);
+  color: white;
+}
+
+.suashub-cardDisabled{
+  opacity: .55;
+  filter: grayscale(0.15);
+}
+.suashub-cardDisabled:hover{
+  transform:none;
+  box-shadow:none;
+}

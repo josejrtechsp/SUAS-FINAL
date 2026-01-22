@@ -1,0 +1,4 @@
+# Dependências extras para emissão de documentos (PDF) e templates
+reportlab
+pillow
+jinja2

@@ -1,0 +1,431 @@
+import { useEffect, useMemo, useState } from "react";
+
+function hojeISO() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export default function TelaCras({ apiBase, apiFetch, usuarioLogado }) {
+  const [pessoas, setPessoas] = useState([]);
+  const [unidades, setUnidades] = useState([]);
+  const [unidadeId, setUnidadeId] = useState(localStorage.getItem("cras_unidade_ativa") || "");
+  const municipioAtivo = localStorage.getItem("cras_municipio_ativo") || "";
+
+  const [triagens, setTriagens] = useState([]);
+  const [resumoTriagem, setResumoTriagem] = useState(null);
+
+  const [pessoaId, setPessoaId] = useState("");
+  const [demanda, setDemanda] = useState("");
+  const [prioridade, setPrioridade] = useState("media");
+  const [canal, setCanal] = useState("espontanea");
+  const [obs, setObs] = useState("");
+  const [desfecho, setDesfecho] = useState("em_atendimento");
+
+  const [paifs, setPaifs] = useState([]);
+  const [paifId, setPaifId] = useState("");
+  const [resumoPaif, setResumoPaif] = useState(null);
+
+  const [novaAcao, setNovaAcao] = useState({ objetivo: "", acao: "", responsavel: "", prazo: "" });
+  const [msg, setMsg] = useState("");
+
+  const etapas = useMemo(() => ["TRIAGEM","DIAGNOSTICO","PLANO","EXECUCAO","MONITORAMENTO","ENCERRAMENTO"], []);
+
+  async function loadPessoas() {
+    const r = await apiFetch(`${apiBase}/pessoas/`);
+    if (r.ok) setPessoas(await r.json());
+  }
+
+  async function loadUnidades() {
+    const q = new URLSearchParams();
+    if (municipioAtivo) q.set("municipio_id", municipioAtivo);
+    if (municipioAtivo) q.set("municipio_id", municipioAtivo);
+    const r = await apiFetch(`${apiBase}/cras/unidades?${q.toString()}`);
+    if (r.ok) {
+      const data = await r.json();
+      setUnidades(data);
+      if (!unidadeId && data.length) setUnidadeId(String(data[0].id));
+    }
+  }
+
+  async function criarUnidadePadrao() {
+    setMsg("");
+    const r = await apiFetch(`${apiBase}/cras/unidades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        municipio_id: municipioAtivo ? Number(municipioAtivo) : undefined, nome: "CRAS 1" }),
+    });
+    if (!r.ok) return setMsg("Sem permissão para criar unidade (precisa admin/coordenação).");
+    setMsg("Unidade CRAS criada ✅");
+    await loadUnidades();
+  }
+
+  async function loadTriagens() {
+    const d = hojeISO();
+    const q = new URLSearchParams();
+    if (municipioAtivo) q.set("municipio_id", municipioAtivo);
+    q.set("data", d);
+    if (unidadeId) q.set("unidade_id", unidadeId);
+    const r = await apiFetch(`${apiBase}/cras/triagens?${q.toString()}`);
+    if (r.ok) setTriagens(await r.json());
+
+    const r2 = await apiFetch(`${apiBase}/cras/triagens/resumo?${q.toString()}`);
+    if (r2.ok) setResumoTriagem(await r2.json());
+  }
+
+  async function loadPaifs() {
+    const r = await apiFetch(`${apiBase}/cras/paif?status=ativo`);
+    if (r.ok) setPaifs(await r.json());
+  }
+
+  async function loadResumoPaif(id) {
+    if (!id) return;
+    const r = await apiFetch(`${apiBase}/cras/paif/${id}/protocolo`);
+    if (r.ok) setResumoPaif(await r.json());
+  }
+
+  useEffect(() => {
+    loadPessoas();
+    loadUnidades();
+    loadPaifs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    loadTriagens();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unidadeId]);
+
+  useEffect(() => {
+    if (paifId) loadResumoPaif(paifId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paifId]);
+
+  async function criarTriagem() {
+    setMsg("");
+    if (!unidadeId) return setMsg("Selecione uma unidade CRAS.");
+    if (!demanda.trim()) return setMsg("Informe a demanda principal.");
+
+    const r = await apiFetch(`${apiBase}/cras/triagens`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        unidade_id: Number(unidadeId),
+        pessoa_id: pessoaId ? Number(pessoaId) : null,
+        canal,
+        prioridade,
+        demanda_principal: demanda.trim(),
+        observacao_operacional: obs.trim() || null,
+        desfecho,
+      }),
+    });
+
+    if (!r.ok) return setMsg("Erro ao criar triagem (verifique unidade/pessoa/permissão).");
+
+    setDemanda("");
+    setObs("");
+    setDesfecho("em_atendimento");
+    setMsg("Triagem criada ✅");
+    await loadTriagens();
+  }
+
+  async function encerrarTriagem(t) {
+    await apiFetch(`${apiBase}/cras/triagens/${t.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "encerrada", desfecho: t.desfecho || "orientado" }),
+    });
+    await loadTriagens();
+  }
+
+  async function converterEmPaif(t) {
+    setMsg("");
+    const r = await apiFetch(`${apiBase}/cras/triagens/${t.id}/converter-paif`, { method: "POST" });
+    if (!r.ok) return setMsg("Não foi possível converter em PAIF (triagem precisa ter pessoa vinculada).");
+    const data = await r.json();
+    await loadPaifs();
+    setPaifId(String(data.paif?.id || ""));
+    setMsg("Convertido em PAIF ✅");
+    await loadTriagens();
+  }
+
+  async function mudarEtapa(etapa) {
+    if (!paifId) return;
+    await apiFetch(`${apiBase}/cras/paif/${paifId}/protocolo/etapa`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ etapa }),
+    });
+    await loadResumoPaif(paifId);
+  }
+
+  async function toggleChecklist(item) {
+    if (!paifId) return;
+    await apiFetch(`${apiBase}/cras/paif/${paifId}/protocolo/checklist/${item.chave}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ etapa: item.etapa, titulo: item.titulo }),
+    });
+    await loadResumoPaif(paifId);
+  }
+
+  async function adicionarAcao() {
+    setMsg("");
+    if (!paifId) return setMsg("Selecione um PAIF.");
+    if (!novaAcao.objetivo || !novaAcao.acao || !novaAcao.responsavel) return setMsg("Objetivo, Ação e Responsável são obrigatórios.");
+
+    const r = await apiFetch(`${apiBase}/cras/paif/${paifId}/protocolo/plano`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(novaAcao),
+    });
+    if (!r.ok) return setMsg("Erro ao salvar ação.");
+    setNovaAcao({ objetivo: "", acao: "", responsavel: "", prazo: "" });
+    await loadResumoPaif(paifId);
+    setMsg("Ação adicionada ✅");
+  }
+
+  const etapaAtual = resumoPaif?.protocolo?.etapa_atual || "TRIAGEM";
+  const checklistEtapa = useMemo(() => {
+    const all = Array.isArray(resumoPaif?.checklist) ? resumoPaif.checklist : [];
+    return all.filter((x) => x.etapa === etapaAtual);
+  }, [resumoPaif, etapaAtual]);
+
+  const mapaUn = useMemo(() => {
+    const m = new Map();
+    unidades.forEach((u) => m.set(u.id, u.nome));
+    return m;
+  }, [unidades]);
+
+  return (
+    <div className="layout-1col">
+        }
+
+      {msg ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+          <strong>{msg}</strong>
+        </div>
+      ) : null}
+
+      <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <label className="label" style={{ margin: 0 }}>Unidade CRAS</label>
+          <select className="input" value={unidadeId} onChange={(e) => setUnidadeId(e.target.value)} style={{ minWidth: 240 }}>
+            <option value="">Selecione…</option>
+            {unidades.map((u) => (
+              <option key={u.id} value={u.id}>{u.nome}</option>
+            ))}
+          </select>
+
+          {!unidades.length ? (
+            <button className="btn btn-secundario" type="button" onClick={criarUnidadePadrao}>
+              Criar unidade "CRAS 1"
+            </button>
+          ) : null}
+
+          <button className="btn btn-secundario" type="button" onClick={loadTriagens}>
+            Atualizar fila
+          </button>
+
+          {resumoTriagem ? (
+            <div className="texto-suave" style={{ marginLeft: "auto" }}>
+              Hoje: <b>{resumoTriagem.total}</b> · Abertas: <b>{resumoTriagem.abertas}</b> · Encerradas: <b>{resumoTriagem.encerradas}</b> · Convertidas: <b>{resumoTriagem.convertidas}</b>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 12 }}>
+        {/* COLUNA 1: FILA + FORM */}
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <h3 style={{ margin: 0 }}>Fila de triagem (hoje)</h3>
+          <p className="texto-suave" style={{ marginTop: 6 }}>
+            Unidade: <b>{unidadeId ? (mapaUn.get(Number(unidadeId)) || "—") : "—"}</b>
+          </p>
+
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {triagens.length ? triagens.map((t) => (
+              <div key={t.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div><b>#{t.id}</b> · {mapaUn.get(t.unidade_id) || `Unidade ${t.unidade_id}`}</div>
+                  <div className="texto-suave">
+                    {t.status} · prioridade: <b>{t.prioridade}</b>
+                  </div>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <b>Demanda:</b> {t.demanda_principal}
+                </div>
+                <div className="texto-suave" style={{ marginTop: 4 }}>
+                  Pessoa: {t.pessoa_id ? `#${t.pessoa_id}` : "não vinculada"} · Canal: {t.canal} · Desfecho: {t.desfecho}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {t.status !== "encerrada" ? (
+                    <button className="btn btn-secundario" type="button" onClick={() => encerrarTriagem(t)}>
+                      Encerrar
+                    </button>
+                  ) : null}
+
+                  {t.status !== "convertida" ? (
+                    <button className="btn btn-primario" type="button" onClick={() => converterEmPaif(t)}>
+                      Converter em PAIF
+                    </button>
+                  ) : (
+                    <span className="texto-suave">PAIF: #{t.paif_id || "—"}</span>
+                  )}
+                </div>
+              </div>
+            )) : (
+              <div className="texto-suave">Sem triagens para hoje (nesta unidade).</div>
+            )}
+          </div>
+
+          <div style={{ height: 14 }} />
+          <h3 style={{ margin: 0 }}>Nova triagem (rápida)</h3>
+
+          <div style={{ height: 10 }} />
+          <label className="label">Pessoa (opcional, mas obrigatório para converter em PAIF)</label>
+          <select className="input" value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+            <option value="">Selecione…</option>
+            {pessoas.map((p) => (
+              <option key={p.id} value={p.id}>
+                #{p.id} — {p.nome_social || p.nome_civil || "Pessoa"}
+              </option>
+            ))}
+          </select>
+
+          <div style={{ height: 8 }} />
+          <label className="label">Demanda principal</label>
+          <input className="input" value={demanda} onChange={(e) => setDemanda(e.target.value)} placeholder="Ex.: atualização CadÚnico, orientação benefício, conflito familiar..." />
+
+          <div style={{ height: 8 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <div>
+              <label className="label">Prioridade</label>
+              <select className="input" value={prioridade} onChange={(e) => setPrioridade(e.target.value)}>
+                <option value="baixa">baixa</option>
+                <option value="media">média</option>
+                <option value="alta">alta</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Canal</label>
+              <select className="input" value={canal} onChange={(e) => setCanal(e.target.value)}>
+                <option value="espontanea">espontânea</option>
+                <option value="agendada">agendada</option>
+                <option value="telefone">telefone</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Desfecho</label>
+              <select className="input" value={desfecho} onChange={(e) => setDesfecho(e.target.value)}>
+                <option value="em_atendimento">em atendimento</option>
+                <option value="orientado">orientado</option>
+                <option value="agendado">agendado</option>
+                <option value="encaminhado">encaminhado</option>
+                <option value="abrir_paif">abrir PAIF</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ height: 8 }} />
+          <label className="label">Observação operacional</label>
+          <textarea className="input" rows={3} value={obs} onChange={(e) => setObs(e.target.value)} />
+
+          <div style={{ marginTop: 10 }}>
+            <button className="btn btn-primario" type="button" onClick={criarTriagem}>
+              Criar triagem
+            </button>
+          </div>
+        </div>
+
+        {/* COLUNA 2: PAIF */}
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <h3 style={{ margin: 0 }}>PAIF (ativos)</h3>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+            <select className="input" value={paifId} onChange={(e) => setPaifId(e.target.value)} style={{ minWidth: 280 }}>
+              <option value="">Selecione um PAIF…</option>
+              {paifs.map((p) => (
+                <option key={p.id} value={p.id}>
+                  PAIF #{p.id} — Pessoa #{p.pessoa_id} — {p.status}
+                </option>
+              ))}
+            </select>
+            <button className="btn btn-secundario" type="button" onClick={loadPaifs}>
+              Atualizar
+            </button>
+          </div>
+
+          {resumoPaif ? (
+            <>
+              <div style={{ height: 12 }} />
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <strong>Etapa atual:</strong>
+                <select className="input" style={{ width: 260 }} value={etapaAtual} onChange={(e) => mudarEtapa(e.target.value)}>
+                  {etapas.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <strong>Checklist (etapa atual)</strong>
+              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                {checklistEtapa.map((it) => (
+                  <button
+                    key={it.id || it.chave}
+                    type="button"
+                    className="btn btn-secundario"
+                    onClick={() => toggleChecklist(it)}
+                    style={{ justifyContent: "space-between", display: "flex" }}
+                  >
+                    <span>{it.titulo}</span>
+                    <span>{it.concluido ? "✅" : "⬜"}</span>
+                  </button>
+                ))}
+                {!checklistEtapa.length ? <div className="texto-suave">Sem itens para esta etapa.</div> : null}
+              </div>
+
+              <div style={{ height: 14 }} />
+              <strong>Plano de ação</strong>
+
+              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                {(resumoPaif.plano || []).map((a) => (
+                  <div key={a.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                    <div><b>{a.objetivo}</b></div>
+                    <div className="texto-suave">{a.acao}</div>
+                    <div style={{ fontSize: 12 }} className="texto-suave">
+                      Resp: {a.responsavel} · Prazo: {a.prazo || "—"} · Status: {a.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div className="card" style={{ padding: 10, borderRadius: 14 }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Adicionar ação</div>
+                <input className="input" placeholder="Objetivo" value={novaAcao.objetivo} onChange={(e) => setNovaAcao({ ...novaAcao, objetivo: e.target.value })} />
+                <div style={{ height: 8 }} />
+                <input className="input" placeholder="Ação" value={novaAcao.acao} onChange={(e) => setNovaAcao({ ...novaAcao, acao: e.target.value })} />
+                <div style={{ height: 8 }} />
+                <input className="input" placeholder="Responsável" value={novaAcao.responsavel} onChange={(e) => setNovaAcao({ ...novaAcao, responsavel: e.target.value })} />
+                <div style={{ height: 8 }} />
+                <input className="input" placeholder="Prazo (YYYY-MM-DD)" value={novaAcao.prazo} onChange={(e) => setNovaAcao({ ...novaAcao, prazo: e.target.value })} />
+                <div style={{ height: 8 }} />
+                <button className="btn btn-primario" type="button" onClick={adicionarAcao}>
+                  Salvar ação
+                </button>
+              </div>
+            </>
+          ) : (
+            <div style={{ marginTop: 12 }} className="texto-suave">
+              Selecione um PAIF para ver protocolo, checklist e plano.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

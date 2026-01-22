@@ -1,0 +1,108 @@
+import React, { useMemo, useState } from "react";
+import TelaCras from "./TelaCras.jsx";
+import TelaCrasEncaminhamentos from "./TelaCrasEncaminhamentos.jsx";
+import { API_BASE } from "./config.js";
+
+export default function CrasApp({ usuarioLogado, onLogout }) {
+  const [activeTab, setActiveTab] = useState("inicio");
+
+  const token = useMemo(() => {
+    return (
+      localStorage.getItem("poprua_token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  }, []);
+
+  async function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (!headers.get("Content-Type") && options.body) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (token && !headers.get("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    return fetch(url, { ...options, headers });
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="app-header-left">
+          <div className="app-title">Sistema CRAS</div>
+          <div className="app-subtitle">Triagem, PAIF e rede com LGPD aplicada</div>
+        </div>
+
+        <div className="app-header-right">
+          <div className="app-user">
+            {usuarioLogado?.nome ? <>Usuário: <strong>{usuarioLogado.nome}</strong></> : null}
+          </div>
+          <button type="button" className="btn btn-secundario" onClick={() => (window.location.href = "/")}>
+            Portal
+          </button>
+          <button type="button" className="btn btn-primario" onClick={() => onLogout?.()}>
+            Sair
+          </button>
+        </div>
+      </header>
+
+      <nav className="app-tabs">
+        <button
+          type="button"
+          className={"app-tab" + (activeTab === "inicio" ? " app-tab-active" : "")}
+          onClick={() => setActiveTab("inicio")}
+        >
+          Início CRAS
+        </button>
+        <button
+          type="button"
+          className={"app-tab" + (activeTab === "paif" ? " app-tab-active" : "")}
+          onClick={() => setActiveTab("paif")}
+        >
+          Triagem + PAIF
+        </button>
+
+        <button
+          type="button"
+          className={"app-tab" + (activeTab === "encaminhamentos" ? " app-tab-active" : "")}
+          onClick={() => setActiveTab("encaminhamentos")}
+        >
+          Encaminhamentos
+        </button>
+
+        {/* futuros: SCFV, Benefícios, Visitas, Relatórios */}
+      </nav>
+
+      <main className="app-main">
+        {activeTab === "inicio" && (
+          <div className="layout-1col">
+            <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+              <h2 style={{ margin: 0 }}>Bem-vindo ao Módulo CRAS</h2>
+              <p style={{ marginTop: 8 }} className="texto-suave">
+                Este módulo será a “mesa de operação” do CRAS: fila de triagem, PAIF por etapas, pendências e devolutivas.
+              </p>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-primario" type="button" onClick={() => setActiveTab("paif")}>
+                  Abrir Triagem + PAIF
+                </button>
+                <button className="btn btn-secundario" type="button" onClick={() => alert("Próximo passo: Dashboard CRAS + fila do dia.")}>
+                  Ver Dashboard CRAS (em construção)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "paif" && (
+          <TelaCras apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+        )}
+
+        {activeTab === "encaminhamentos" && (
+          <TelaCrasEncaminhamentos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+        )}
+      </main>
+    </div>
+  );
+}

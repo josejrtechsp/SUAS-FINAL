@@ -1,0 +1,40 @@
+# Node/Front
+node_modules/
+dist/
+build/
+coverage/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / logs
+.DS_Store
+*.log
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Data / uploads
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+
+# Archives
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Env (recursive)
+**/.env
+**/.env.*
+
+# Runtime/artefatos (NÃO versionar)
+backend/storage/

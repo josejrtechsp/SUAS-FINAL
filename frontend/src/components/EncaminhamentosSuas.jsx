@@ -1,0 +1,1125 @@
+import React, { useEffect, useMemo, useState } from "react";
+import "../cras_actions_kebab_card.css"; // CRAS_ACTIONS_KEBAB_CARD_V1
+import {
+  createSuasEncaminhamento,
+  getSuasInbox,
+  getSuasOutbox,
+  getSuasOverdueForModulo,
+  isSuasOverdue,
+  marcarEmAtendimentoSuasEncaminhamento,
+  marcarRecebidoSuasEncaminhamento,
+  registrarRetornoSuasEncaminhamentoModelo,
+  registrarCobrancaSuasEncaminhamento,
+  inferSuasActionForModulo,
+  concluirSuasEncaminhamento,
+  cancelarSuasEncaminhamento,
+} from "../domain/suasEncaminhamentosStore.js";
+import { getPessoaById, ensurePessoaBasica } from "../domain/pessoasStore.js";
+import { updateCreasCase, addTimeline } from "../domain/creasStore.js";
+import { isGestor, isTecnico, isLeitura } from "../domain/acl.js";
+
+function fmtPrazo(p) {
+  if (!p) return "—";
+  try {
+    // p pode ser YYYY-MM-DD
+    if (String(p).length === 10 && String(p).includes("-")) {
+      const [y, m, d] = String(p).split("-");
+      return `${d}/${m}/${y}`;
+    }
+    const d = new Date(p);
+    if (Number.isNaN(d.getTime())) return String(p);
+    return d.toLocaleDateString("pt-BR");
+  } catch {
+    return String(p);
+  }
+}
+
+function fmtDataHora(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString("pt-BR");
+  } catch {
+    return String(iso);
+  }
+}
+
+
+function parsePrazoSugToIso(p) {
+  const s = String(p || "").trim();
+  if (!s) return null;
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + "T12:00:00");
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  // DD/MM/YYYY
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const dd = String(m[1]).padStart(2, "0");
+    const mm = String(m[2]).padStart(2, "0");
+    const yy = m[3];
+    const d = new Date(`${yy}-${mm}-${dd}T12:00:00`);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  // "X dias"
+  const md = s.match(/(\d{1,3})\s*d/i);
+  if (md) {
+    const n = Number(md[1]);
+    if (Number.isFinite(n) && n > 0) {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      d.setHours(12, 0, 0, 0);
+      return d.toISOString();
+    }
+  }
+
+  return null;
+}
+
+function canApplyRetornoToCreas(item, modulo) {
+  const m = String(modulo || "").toUpperCase();
+  const origin = String(item?.origem_modulo || "").toUpperCase();
+  const st = String(item?.status || "").toLowerCase();
+  return (
+    m === "CREAS" &&
+    origin === "CREAS" &&
+    st === "retorno_enviado" &&
+    item?.origem_caso_id != null &&
+    item?.retorno_modelo
+  );
+}
+
+function applyRetornoToCreasCase(item, usuarioLogado) {
+  const caseId = item?.origem_caso_id;
+  if (caseId == null) return false;
+
+  const model = item?.retorno_modelo || {};
+  const nowIso = new Date().toISOString();
+
+  const nextText = String(model?.origem_deve_fazer_agora || "").trim();
+  const prazoIso = parsePrazoSugToIso(model?.prazo_sugerido);
+
+  const patch = { ultimo_registro_em: nowIso };
+  if (nextText) patch.proximo_passo = nextText;
+  if (prazoIso) patch.proximo_passo_em = prazoIso;
+
+  updateCreasCase(caseId, patch);
+
+  const destino = String(item?.destino_modulo || "").toUpperCase() || "DESTINO";
+  const resumo = String(item?.retorno_texto || "").trim() || "Devolutiva recebida";
+  addTimeline(caseId, {
+    tipo: "suas",
+    texto: `Devolutiva (${destino}) · ${resumo}`,
+    por: usuarioLogado?.nome || "—",
+    criado_em: nowIso,
+  });
+
+  return true;
+}
+function datePlusDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + (days || 0));
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return yyyy + "-" + mm + "-" + dd;
+}
+
+function pill(text, variant = "") {
+  return <span className={"cras-pill" + (variant ? ` cras-pill--${variant}` : "")}>{text}</span>;
+}
+
+function labelStatus(s) {
+  const st = String(s || "enviado").toLowerCase();
+  const map = {
+    enviado: "ENVIADO",
+    recebido: "RECEBIDO",
+    em_atendimento: "EM ATENDIMENTO",
+    retorno_enviado: "DEVOLUTIVA",
+    concluido: "CONCLUÍDO",
+    cancelado: "CANCELADO",
+  };
+  return map[st] || st.toUpperCase();
+}
+
+function labelPrioridade(p) {
+  const v = String(p || "media").toLowerCase();
+  if (v === "alta") return "ALTA";
+  if (v === "baixa") return "BAIXA";
+  return "MÉDIA";
+}
+
+function safeView(v) {
+  return v === "inbox" || v === "outbox" ? v : null;
+}
+
+function canAtuar(usuario) {
+  // leitura não atua; recepção pode criar, mas não envia devolutiva/encerra.
+  return isGestor(usuario) || isTecnico(usuario);
+}
+
+export default function EncaminhamentosSuas({
+  modulo = "CREAS",
+  apiBase = null,
+  apiFetch = null,
+  usuarioLogado,
+  allowCreate = false,
+  pessoasOptions = null, // [{id, nome}]
+  // Opcional: destino pode criar um caso automaticamente ao receber.
+  // Deve retornar o ID do caso criado (ou null).
+  onAcceptCreateCaso,
+  onOpenDestinoCaso,
+  title = "Encaminhamentos SUAS",
+  subtitle = "Entre CRAS, CREAS e PopRua (com contrarreferência).",
+}) {
+  const [refresh, setRefresh] = useState(0);
+  const [view, setView] = useState("inbox"); // inbox | outbox
+  const [showNew, setShowNew] = useState(false);
+
+  const readOnly = useMemo(() => isLeitura(usuarioLogado), [usuarioLogado]);
+  const podeAtuar = useMemo(() => canAtuar(usuarioLogado), [usuarioLogado]);
+
+  const backendMode = useMemo(() => Boolean(apiBase && apiFetch), [apiBase, apiFetch]);
+  const municipioAtivo = useMemo(() => {
+    try {
+      const k = String(modulo || '').toLowerCase();
+      return (
+        localStorage.getItem(k + '_municipio_ativo') ||
+        localStorage.getItem('cras_municipio_ativo') ||
+        localStorage.getItem('municipio_ativo') ||
+        ''
+      );
+    } catch {
+      return '';
+    }
+  }, [modulo]);
+
+  const [inboxApi, setInboxApi] = useState(null);
+  const [outboxApi, setOutboxApi] = useState(null);
+
+  async function apiList(view) {
+    if (!backendMode) return [];
+    const q = new URLSearchParams();
+    q.set('modulo', String(modulo || 'CRAS'));
+    q.set('view', view || 'inbox');
+    if (municipioAtivo) q.set('municipio_id', String(municipioAtivo));
+    const r = await apiFetch(`${apiBase}/suas/encaminhamentos?${q.toString()}`);
+    if (!r.ok) throw new Error(await r.text().catch(() => ''));
+    return await r.json();
+  }
+
+  async function apiCreate(payload) {
+    const q = new URLSearchParams();
+    if (municipioAtivo) q.set('municipio_id', String(municipioAtivo));
+    const r = await apiFetch(`${apiBase}/suas/encaminhamentos?${q.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!r.ok) throw new Error(await r.text().catch(() => ''));
+    return await r.json();
+  }
+
+  async function apiStatus(encId, payload) {
+    const q = new URLSearchParams();
+    if (municipioAtivo) q.set('municipio_id', String(municipioAtivo));
+    const r = await apiFetch(`${apiBase}/suas/encaminhamentos/${encId}/status?${q.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!r.ok) throw new Error(await r.text().catch(() => ''));
+    return await r.json();
+  }
+
+  useEffect(() => {
+    if (!backendMode) return;
+    let alive = true;
+    (async () => {
+      try {
+        const [inb, out] = await Promise.all([apiList('inbox'), apiList('outbox')]);
+        if (!alive) return;
+        setInboxApi(Array.isArray(inb) ? inb : []);
+        setOutboxApi(Array.isArray(out) ? out : []);
+      } catch (e) {
+        console.error(e);
+        if (!alive) return;
+        setInboxApi([]);
+        setOutboxApi([]);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [backendMode, apiBase, modulo, refresh, municipioAtivo]);
+
+  // form (novo encaminhamento)
+  const [fPessoaId, setFPessoaId] = useState("");
+  const [fDestino, setFDestino] = useState("CREAS");
+  const [fPrioridade, setFPrioridade] = useState("media");
+  const [fPrazo, setFPrazo] = useState("");
+  const [fMotivo, setFMotivo] = useState("");
+  const [msg, setMsg] = useState("");
+  const [confirmBox, setConfirmBox] = useState(null);
+  const [promptBox, setPromptBox] = useState(null);
+
+  // Devolutiva padronizada (contrarreferência) — modal guiado
+  const [devOpen, setDevOpen] = useState(false);
+  const [devItem, setDevItem] = useState(null);
+  const [dFeito, setDFeito] = useState("");
+  const [dSituacao, setDSituacao] = useState("Em acompanhamento");
+  const [dOrigemAcao, setDOrigemAcao] = useState("");
+  const [dPrazoSug, setDPrazoSug] = useState("");
+  const [dObs, setDObs] = useState("");
+
+  // Cobrança (origem) — modal guiado
+  const [cobOpen, setCobOpen] = useState(false);
+  const [cobItem, setCobItem] = useState(null);
+  const [cobTexto, setCobTexto] = useState("");
+
+  useEffect(() => {
+    const onStorage = () => setRefresh((x) => x + 1);
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Lembrar última aba (Recebidos/Enviados) por módulo
+  useEffect(() => {
+    try {
+      const last = safeView(localStorage.getItem("suas_last_view_" + modulo));
+      if (last) setView(last);
+    } catch {}
+  }, [modulo]);
+
+  // Deep link: módulos podem pedir para abrir inbox/outbox e focar em um ID.
+  useEffect(() => {
+    try {
+      const navModulo = localStorage.getItem("suas_nav_modulo");
+      if (!navModulo) return;
+      if (String(navModulo).toUpperCase() !== String(modulo).toUpperCase()) return;
+
+      const navView = safeView(localStorage.getItem("suas_nav_view"));
+      if (navView) setView(navView);
+
+
+      const navId = localStorage.getItem("suas_nav_selected_id");
+      if (navId) {
+        setTimeout(() => {
+          const el = document.getElementById(`suas_item_${navId}`);
+          if (el && typeof el.scrollIntoView === "function") {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }, 220);
+      }
+
+      localStorage.removeItem("suas_nav_modulo");
+      localStorage.removeItem("suas_nav_view");
+      localStorage.removeItem("suas_nav_selected_id");
+    } catch {}
+  }, [modulo]);
+  const inbox = useMemo(() => (backendMode ? (inboxApi || []) : getSuasInbox(modulo)), [backendMode, inboxApi, modulo, refresh]);
+  const outbox = useMemo(() => (backendMode ? (outboxApi || []) : getSuasOutbox(modulo)), [backendMode, outboxApi, modulo, refresh]);
+
+  const itens = view === "inbox" ? inbox : outbox;
+  const overdueAll = useMemo(() => {
+    if (!backendMode) return getSuasOverdueForModulo(modulo);
+    const base = [...(inbox || []), ...(outbox || [])];
+    return base.filter((x) => isSuasOverdue(x));
+  }, [backendMode, inbox, outbox, modulo, refresh]);
+
+  const overdueIn = useMemo(
+    () => (overdueAll || []).filter((x) => String(x?.destino_modulo || '').toUpperCase() === String(modulo).toUpperCase()),
+    [overdueAll, modulo]
+  );
+  const overdueOut = useMemo(
+    () => (overdueAll || []).filter((x) => String(x?.origem_modulo || '').toUpperCase() === String(modulo).toUpperCase()),
+    [overdueAll, modulo]
+  );
+  const pessoasMap = useMemo(() => {
+    const m = new Map();
+    try {
+      (Array.isArray(pessoasOptions) ? pessoasOptions : []).forEach((x) => {
+        const id = Number(x?.id);
+        if (id && !Number.isNaN(id)) m.set(id, x?.nome || x?.nome_social || x?.nome_civil || `Pessoa #${id}`);
+      });
+    } catch {}
+    return m;
+  }, [pessoasOptions]);
+
+  function nomePessoa(pid) {
+    const id = Number(pid);
+    if (!id || Number.isNaN(id)) return 'Pessoa';
+    const fromOpts = pessoasMap.get(id);
+    if (fromOpts) return fromOpts;
+    const p = getPessoaById(id);
+    return p?.nome || `Pessoa #${id}`;
+  }
+
+  function flash(m) {
+    setMsg(m || "");
+    if (!m) return;
+    setTimeout(() => setMsg(""), 2600);
+  }
+
+  function openConfirm({ title, text, onOk }) {
+    setConfirmBox({ title: title || 'Confirmar', text: text || '', onOk: onOk || null });
+  }
+
+  function openPrompt({ title, label, defaultValue, onOk }) {
+    setPromptBox({
+      title: title || 'Informar',
+      label: label || 'Motivo',
+      value: defaultValue || '',
+      onOk: onOk || null,
+    });
+  }
+  async function criar() {
+    if (!allowCreate) return;
+    if (readOnly) return;
+
+    const pid = Number(fPessoaId);
+    if (!pid || Number.isNaN(pid)) return flash('Selecione a pessoa/família.');
+    if (!fDestino) return flash('Selecione o destino.');
+    if (!String(fMotivo || '').trim()) return flash('Informe o motivo (curto).');
+
+    // Garante ficha básica local (para aparecer nome na Ficha Única e nas listas)
+    try {
+      const opt = Array.isArray(pessoasOptions) ? pessoasOptions.find((x) => Number(x?.id) === pid) : null;
+      const nome = opt?.nome || opt?.nome_social || opt?.nome_civil || `Pessoa #${pid}`;
+      ensurePessoaBasica({ pessoa_id: pid, nome });
+    } catch {}
+
+    const payload = {
+      pessoa_id: pid,
+      origem_modulo: modulo,
+      destino_modulo: fDestino,
+      motivo: String(fMotivo).trim(),
+      prioridade: fPrioridade,
+      prazo_retorno: fPrazo || null,
+    };
+
+    try {
+      if (backendMode) {
+        const created = await apiCreate(payload);
+        try {
+          localStorage.setItem('suas_nav_modulo', String(modulo || 'CRAS'));
+          localStorage.setItem('suas_nav_view', 'outbox');
+          localStorage.setItem('suas_nav_selected_id', String(created?.id));
+        } catch {}
+      } else {
+        createSuasEncaminhamento(payload, usuarioLogado);
+      }
+
+      setFMotivo('');
+      setFPrazo('');
+      flash('Encaminhamento enviado ✅');
+      setRefresh((x) => x + 1);
+    } catch (e) {
+      console.error(e);
+      flash('Erro ao enviar encaminhamento.');
+    }
+  }
+
+  async function receber(item) {
+    if (!podeAtuar) return flash('Seu perfil não pode receber encaminhamentos.');
+
+    openConfirm({
+      title: 'Receber encaminhamento',
+      text: 'Confirmar RECEBIMENTO deste encaminhamento?',
+      onOk: async () => {
+        let destinoCasoId = item?.destino_caso_id || null;
+
+        if (!destinoCasoId && typeof onAcceptCreateCaso === 'function') {
+          try {
+            let created = onAcceptCreateCaso(item);
+            if (created && typeof created.then === 'function') created = await created;
+            if (created != null && !Number.isNaN(Number(created))) destinoCasoId = Number(created);
+          } catch (e) {
+            console.error(e);
+            flash('Não foi possível criar o caso automaticamente. Você pode receber mesmo assim.');
+          }
+        }
+
+        try {
+          if (backendMode) {
+            await apiStatus(item.id, { status: 'recebido', detalhe: 'Recebido pelo destino ✅', destino_caso_id: destinoCasoId });
+            await apiStatus(item.id, { status: 'em_atendimento', detalhe: 'Em atendimento no destino' });
+          } else {
+            marcarRecebidoSuasEncaminhamento(item.id, usuarioLogado, { destino_caso_id: destinoCasoId });
+            marcarEmAtendimentoSuasEncaminhamento(item.id, usuarioLogado);
+          }
+          flash('Recebido ✅');
+          setRefresh((x) => x + 1);
+        } catch (e) {
+          console.error(e);
+          flash('Erro ao receber encaminhamento.');
+        }
+      },
+    });
+  }
+
+
+  function abrirDevolutiva(item) {
+    if (!podeAtuar) return flash("Seu perfil não pode enviar devolutiva.");
+
+    setDevItem(item);
+    setDFeito("");
+    setDSituacao("Em acompanhamento");
+    setDOrigemAcao("");
+    setDPrazoSug(item?.prazo_retorno || datePlusDays(7));
+    setDObs("");
+    setDevOpen(true);
+  }
+  async function enviarDevolutiva() {
+    if (!devItem) return;
+    if (!podeAtuar) return;
+
+    const model = {
+      o_que_foi_feito: dFeito,
+      situacao_atual: dSituacao,
+      origem_deve_fazer_agora: dOrigemAcao,
+      prazo_sugerido: dPrazoSug,
+      observacoes: dObs,
+    };
+
+    const feito = String(dFeito || '').trim();
+    const situacao = String(dSituacao || '').trim();
+    const origem = String(dOrigemAcao || '').trim();
+    if (!feito || !situacao || !origem) return flash('Preencha pelo menos: O que foi feito / Situação atual / Origem deve fazer agora.');
+
+    // resumo curto
+    const resumo = `Situação: ${situacao} · Origem: ${origem}`.slice(0, 220);
+
+    const detalhe = [
+      '✅ Devolutiva (contrarreferência)',
+      `• O que foi feito: ${feito}`,
+      `• Situação atual: ${situacao}`,
+      `• Origem deve fazer agora: ${origem}`,
+      dPrazoSug ? `• Prazo sugerido: ${String(dPrazoSug).trim()}` : null,
+      dObs ? `• Observações: ${String(dObs).trim()}` : null,
+    ].filter(Boolean).join('\n');
+
+    try {
+      if (backendMode) {
+        await apiStatus(devItem.id, {
+          status: 'retorno_enviado',
+          detalhe: 'Devolutiva enviada ✅',
+          retorno_texto: resumo,
+          retorno_detalhe: detalhe,
+          retorno_modelo_json: JSON.stringify(model),
+        });
+      } else {
+        const out = registrarRetornoSuasEncaminhamentoModelo(devItem.id, usuarioLogado, model);
+        if (!out) return flash('Preencha pelo menos: O que foi feito / Situação atual / Origem deve fazer agora.');
+      }
+
+      setDevOpen(false);
+      setDevItem(null);
+      flash('Devolutiva enviada ✅');
+      setRefresh((x) => x + 1);
+    } catch (e) {
+      console.error(e);
+      flash('Erro ao enviar devolutiva.');
+    }
+  }
+
+  function abrirCobranca(item) {
+    if (!podeAtuar) return flash("Seu perfil não pode cobrar retorno.");
+    setCobItem(item);
+    setCobTexto("Prazo vencido — por favor enviar devolutiva/retorno.");
+    setCobOpen(true);
+  }
+  async function registrarCobranca() {
+    if (!cobItem) return;
+    if (!podeAtuar) return;
+
+    const texto = String(cobTexto || '').trim() || 'Cobrança registrada';
+
+    try {
+      if (backendMode) {
+        const st = String(cobItem?.status || 'enviado').toLowerCase();
+        await apiStatus(cobItem.id, { status: st, detalhe: `Cobrança: ${texto}`, cobranca: true, cobranca_texto: texto });
+      } else {
+        registrarCobrancaSuasEncaminhamento(cobItem.id, usuarioLogado, texto);
+      }
+
+      setCobOpen(false);
+      setCobItem(null);
+      setCobTexto('');
+      flash('Cobrança registrada ✅');
+      setRefresh((x) => x + 1);
+    } catch (e) {
+      console.error(e);
+      flash('Erro ao registrar cobrança.');
+    }
+  }
+  function concluir(item) {
+    if (!podeAtuar) return flash("Seu perfil não pode concluir.");
+
+    const aplicarCreas = canApplyRetornoToCreas(item, modulo);
+
+    openConfirm({
+      title: "Concluir",
+      text: aplicarCreas
+        ? "Há devolutiva. Deseja APLICAR a devolutiva no caso do CREAS e concluir este encaminhamento?"
+        : "Marcar como CONCLUÍDO (resolvido)?",
+      onOk: async () => {
+        if (aplicarCreas) {
+          const ok = applyRetornoToCreasCase(item, usuarioLogado);
+          if (!ok) return flash("Não foi possível aplicar a devolutiva ao caso do CREAS.");
+        }
+        try {
+          if (backendMode) {
+            await apiStatus(item.id, { status: 'concluido', detalhe: aplicarCreas ? 'Devolutiva aplicada ao caso e concluído.' : 'Concluído pela origem.' });
+          } else {
+            concluirSuasEncaminhamento(item.id, usuarioLogado, aplicarCreas ? 'Devolutiva aplicada ao caso e concluído.' : 'Concluído pela origem.');
+          }
+        } catch (e) {
+          console.error(e);
+          return flash('Erro ao concluir.');
+        }
+        flash("Concluído ✅");
+        setRefresh((x) => x + 1);
+      },
+    });
+  }
+  function cancelar(item) {
+    if (!podeAtuar) return flash('Seu perfil não pode cancelar.');
+
+    openPrompt({
+      title: 'Cancelar encaminhamento',
+      label: 'Motivo do cancelamento (curto)',
+      defaultValue: 'Cancelado',
+      onOk: async (motivo) => {
+        const m = String(motivo || '').trim();
+        if (!m) return flash('Informe um motivo (curto).');
+        try {
+          if (backendMode) {
+            await apiStatus(item.id, { status: 'cancelado', detalhe: m });
+          } else {
+            cancelarSuasEncaminhamento(item.id, usuarioLogado, m);
+          }
+        } catch (e) {
+          console.error(e);
+          return flash('Erro ao cancelar.');
+        }
+        flash('Cancelado');
+        setRefresh((x) => x + 1);
+      },
+    });
+  }
+
+
+  function abrirDestinoCaso(item) {
+    if (!onOpenDestinoCaso) return;
+    if (!item?.destino_caso_id) return;
+    onOpenDestinoCaso(item);
+  }
+
+  return (
+    <>
+      <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+      <div className="card-header-row" style={{ alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontWeight: 950, fontSize: 18 }}>{title}</div>
+          <div className="texto-suave">{subtitle}</div>
+
+          {(overdueAll || []).length ? (
+            <div className="texto-suave" style={{ marginTop: 6 }}>
+              <b>⚠️ Atrasados:</b> {(overdueAll || []).length} prazo(s) vencido(s)
+              {overdueIn.length || overdueOut.length ? (
+                <>
+                  {" "}· Recebidos: <b>{overdueIn.length}</b> · Enviados: <b>{overdueOut.length}</b>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            className={"btn " + (view === "inbox" ? "btn-primario" : "btn-secundario")}
+            type="button"
+            onClick={() => { setView("inbox"); try { localStorage.setItem("suas_last_view_"+modulo, "inbox"); } catch {} }}
+          >
+            Recebidos ({inbox.length})
+          </button>
+          <button
+            className={"btn " + (view === "outbox" ? "btn-primario" : "btn-secundario")}
+            type="button"
+            onClick={() => { setView("outbox"); try { localStorage.setItem("suas_last_view_"+modulo, "outbox"); } catch {} }}
+          >
+            Enviados ({outbox.length})
+          </button>
+
+          {allowCreate ? (
+            <button className="btn btn-secundario" type="button" onClick={() => setShowNew((s) => !s)}>
+              {showNew ? "Fechar" : "Novo encaminhamento"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {msg ? (
+        <div className="card" style={{ padding: 10, marginTop: 10, boxShadow: "none", border: "1px solid rgba(2,6,23,.06)" }}>
+          <b>{msg}</b>
+        </div>
+      ) : null}
+
+      {allowCreate && showNew ? (
+        <div className="card" style={{ marginTop: 10, padding: 12, boxShadow: "none", border: "1px solid rgba(2,6,23,.06)" }}>
+          <div style={{ fontWeight: 950 }}>Novo encaminhamento SUAS</div>
+          <div className="texto-suave">Preencha o mínimo: pessoa, destino e motivo.</div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "end" }}>
+            <div style={{ flex: "1 1 220px" }}>
+              <label className="label">Pessoa/Família</label>
+              {Array.isArray(pessoasOptions) ? (
+                <select className="input" value={fPessoaId} onChange={(e) => setFPessoaId(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {pessoasOptions.map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.nome}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input className="input" value={fPessoaId} onChange={(e) => setFPessoaId(e.target.value)} placeholder="ID da pessoa (ex.: 12)" />
+              )}
+            </div>
+
+            <div style={{ flex: "0 0 180px" }}>
+              <label className="label">Destino</label>
+              <select className="input" value={fDestino} onChange={(e) => setFDestino(e.target.value)}>
+                <option value="CRAS">CRAS</option>
+                <option value="CREAS">CREAS</option>
+                <option value="POPRUA">PopRua</option>
+              </select>
+            </div>
+
+            <div style={{ flex: "0 0 220px" }}>
+              <label className="label">Prazo de retorno</label>
+              <input className="input" type="date" value={fPrazo} onChange={(e) => setFPrazo(e.target.value)} />
+            </div>
+
+            <div style={{ flex: "1 1 320px" }}>
+              <label className="label">Motivo (curto)</label>
+              <input
+                className="input"
+                value={fMotivo}
+                onChange={(e) => setFMotivo(e.target.value)}
+                placeholder="Ex.: Solicito acompanhamento especializado"
+              />
+            </div>
+
+            <div style={{ flex: "0 0 240px" }}>
+              <label className="label">Prioridade</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className={"btn " + (fPrioridade === "baixa" ? "btn-primario" : "btn-secundario")} type="button" onClick={() => setFPrioridade("baixa")}>
+                  Baixa
+                </button>
+                <button className={"btn " + (fPrioridade === "media" ? "btn-primario" : "btn-secundario")} type="button" onClick={() => setFPrioridade("media")}>
+                  Média
+                </button>
+                <button className={"btn " + (fPrioridade === "alta" ? "btn-primario" : "btn-secundario")} type="button" onClick={() => setFPrioridade("alta")}>
+                  Alta
+                </button>
+              </div>
+            </div>
+
+            <div style={{ flex: "0 0 220px" }}>
+              <button className="btn btn-primario" type="button" onClick={criar} disabled={readOnly}>
+                Enviar encaminhamento
+              </button>
+              {readOnly ? (
+                <div className="texto-suave" style={{ marginTop: 6 }}>
+                  Seu perfil está em <b>somente leitura</b>.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+        {(itens || []).length ? (
+          itens.map((item) => {
+            const overdue = isSuasOverdue(item);
+            const status = String(item?.status || "enviado").toLowerCase();
+            const isInbox = view === "inbox";
+
+            const action = inferSuasActionForModulo(item, modulo);
+
+            const podeReceber = podeAtuar && isInbox && status === "enviado";
+            const podeDevolver = podeAtuar && isInbox && ["recebido", "em_atendimento"].includes(status);
+
+            const podeConcluir = podeAtuar && !isInbox && status === "retorno_enviado";
+            const podeCobrar = podeAtuar && !isInbox && action === "cobrar" && overdue;
+
+            const podeCancelar = podeAtuar && status !== "concluido" && status !== "cancelado";
+
+            return (
+              <div
+                key={item.id}
+                id={`suas_item_${item.id}`}
+                className="card"
+                style={{
+                  padding: 12,
+                  boxShadow: "none",
+                  border: "1px solid rgba(2,6,23,.06)",
+                  background: overdue ? "rgba(239, 68, 68, 0.06)" : undefined,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 260 }}>
+                    <div style={{ fontWeight: 950, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      {pill(labelStatus(status), status)}
+                      {pill(labelPrioridade(item?.prioridade), "")}
+                      <span className="texto-suave">
+                        {isInbox ? (
+                          <>
+                            Origem: <b>{item?.origem_modulo}</b>
+                          </>
+                        ) : (
+                          <>
+                            Destino: <b>{item?.destino_modulo}</b>
+                          </>
+                        )}
+                      </span>
+                    </div>
+
+                    <div style={{ marginTop: 6 }}>
+                      <b>{nomePessoa(item?.pessoa_id)}</b>
+                      <span className="texto-suave"> · ID {item?.pessoa_id}</span>
+                    </div>
+                    <div className="texto-suave" style={{ marginTop: 4 }}>
+                      Prazo: <b>{fmtPrazo(item?.prazo_retorno)}</b>
+                      {overdue ? (
+                        <span style={{ marginLeft: 8 }}>
+                          <b>⚠️ Vencido</b>
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={{ marginTop: 6 }}>{item?.motivo}</div>
+
+                    {item?.retorno_texto ? (
+                      <div className="texto-suave" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                        <b>Devolutiva:</b> {item.retorno_texto}
+                        {item?.retorno_em ? (
+                          <div className="texto-suave" style={{ marginTop: 4 }}>
+                            Enviada em: <b>{fmtDataHora(item.retorno_em)}</b>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {item?.cobranca_total ? (
+                      <div className="texto-suave" style={{ marginTop: 6 }}>
+                        Cobranças: <b>{item.cobranca_total}</b>
+                        {item?.cobranca_ultimo_em ? (
+                          <> · última em <b>{fmtDataHora(item.cobranca_ultimo_em)}</b></>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start", justifyContent: "flex-end" }}>
+                    {item?.destino_caso_id && item?.destino_modulo === String(modulo).toUpperCase() && onOpenDestinoCaso ? (
+                      <button className="btn btn-secundario" type="button" onClick={() => abrirDestinoCaso(item)}>
+                        Abrir caso
+                      </button>
+                    ) : null}
+
+                    {podeReceber ? (
+                      <button className="btn btn-primario" type="button" onClick={() => receber(item)}>
+                        Receber
+                      </button>
+                    ) : null}
+
+                    {podeDevolver ? (
+                      <button className="btn btn-primario" type="button" onClick={() => abrirDevolutiva(item)}>
+                        Enviar devolutiva
+                      </button>
+                    ) : null}
+
+                    {podeCobrar ? (
+                      <button className="btn btn-primario" type="button" onClick={() => abrirCobranca(item)}>
+                        Cobrar retorno
+                      </button>
+                    ) : null}
+
+                    {podeConcluir ? (
+                      <button className="btn btn-primario" type="button" onClick={() => concluir(item)}>
+                        Concluir
+                      </button>
+                    ) : null}
+
+                    {podeCancelar ? (
+                      <details className="cras-kebab-menu">
+                        <summary className="cras-kebab-btn" aria-label="Mais ações">⋯</summary>
+                        <div className="cras-kebab-pop">
+                          <button
+                            className="btn btn-secundario btn-secundario-mini"
+                            type="button"
+                            onClick={(e) => {
+                              cancelar(item);
+                              const d = e.currentTarget && e.currentTarget.closest("details");
+                              if (d) d.removeAttribute("open");
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </details>
+                    ) : null}
+
+                    {/* Ajuda contextual (autoexplicativa) */}
+                    {isInbox && status === "enviado" ? (
+                      <div className="texto-suave" style={{ maxWidth: 240 }}>
+                        Clique em <b>Receber</b> para confirmar e colocar na fila do equipamento.
+                      </div>
+                    ) : null}
+
+                    {isInbox && ["recebido", "em_atendimento"].includes(status) ? (
+                      <div className="texto-suave" style={{ maxWidth: 240 }}>
+                        Depois do atendimento, envie a <b>devolutiva</b> para o equipamento de origem.
+                      </div>
+                    ) : null}
+
+                    {!isInbox && action === "cobrar" && !overdue ? (
+                      <div className="texto-suave" style={{ maxWidth: 240 }}>
+                        Aguardando retorno. O botão <b>Cobrar retorno</b> aparece quando o prazo vencer.
+                      </div>
+                    ) : null}
+
+                    {!isInbox && status === "retorno_enviado" ? (
+                      <div className="texto-suave" style={{ maxWidth: 240 }}>
+                        Já há devolutiva. Clique em <b>Concluir</b> quando estiver resolvido.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="texto-suave">Nenhum encaminhamento nesta visão.</div>
+        )}
+      </div>
+
+      {devOpen ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">Enviar devolutiva (contrarreferência)</div>
+                <div className="texto-suave">
+                  Preencha o mínimo para a origem entender o que foi feito e o que fazer agora.
+                </div>
+              </div>
+              <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={() => setDevOpen(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <label className="form-label">
+                O que foi feito (curto)
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={dFeito}
+                  onChange={(e) => setDFeito(e.target.value)}
+                  placeholder="Ex.: atendimento realizado, visita, orientação, articulação com rede..."
+                />
+              </label>
+
+              <label className="form-label">
+                Situação atual
+                <select className="input" value={dSituacao} onChange={(e) => setDSituacao(e.target.value)}>
+                  <option>Em acompanhamento</option>
+                  <option>Resolvido</option>
+                  <option>Sem contato / não localizado</option>
+                  <option>Aguardando documento/comparecimento</option>
+                  <option>Encaminhado para outro serviço</option>
+                </select>
+              </label>
+
+              <label className="form-label">
+                O que a origem deve fazer agora
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={dOrigemAcao}
+                  onChange={(e) => setDOrigemAcao(e.target.value)}
+                  placeholder="Ex.: agendar retorno, atualizar cadastro, orientar família, acompanhar território..."
+                />
+              </label>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <label className="form-label" style={{ flex: "1 1 240px" }}>
+                  Prazo sugerido
+                  <input className="input" type="date" value={dPrazoSug} onChange={(e) => setDPrazoSug(e.target.value)} />
+                </label>
+                <div className="texto-suave" style={{ alignSelf: "end", flex: "1 1 220px" }}>
+                  Dica: use para orientar a origem sobre quando retornar/acompanhar.
+                </div>
+              </div>
+
+              <label className="form-label">
+                Observações (opcional)
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={dObs}
+                  onChange={(e) => setDObs(e.target.value)}
+                  placeholder="Opcional (curto)"
+                />
+              </label>
+            </div>
+
+            <div className="modal-footer" style={{ gap: 10 }}>
+              <button type="button" className="btn btn-secundario" onClick={() => setDevOpen(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primario" onClick={enviarDevolutiva} disabled={readOnly || !podeAtuar}>
+                Enviar devolutiva
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cobOpen ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">Cobrar retorno (prazo vencido)</div>
+                <div className="texto-suave">Registra a cobrança no histórico do encaminhamento.</div>
+              </div>
+              <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={() => setCobOpen(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <label className="form-label">
+                Mensagem (curta)
+                <textarea className="input" rows={3} value={cobTexto} onChange={(e) => setCobTexto(e.target.value)} />
+              </label>
+              <div className="texto-suave">O destino verá esta cobrança quando abrir os Encaminhamentos SUAS.</div>
+            </div>
+
+            <div className="modal-footer" style={{ gap: 10 }}>
+              <button type="button" className="btn btn-secundario" onClick={() => setCobOpen(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primario" onClick={registrarCobranca} disabled={readOnly || !podeAtuar}>
+                Registrar cobrança
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      </div>
+
+      {confirmBox ? (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConfirmBox(null);
+          }}
+        >
+          <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">{confirmBox.title}</div>
+              <button className="btn btn-secundario" type="button" onClick={() => setConfirmBox(null)}>
+                Fechar
+              </button>
+            </div>
+            <div className="modal-body">
+              <div>{confirmBox.text}</div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn btn-secundario" type="button" onClick={() => setConfirmBox(null)}>
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primario"
+                type="button"
+                onClick={async () => {
+                  const fn = confirmBox?.onOk;
+                  setConfirmBox(null);
+                  try {
+                    if (fn) await fn();
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {promptBox ? (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPromptBox(null);
+          }}
+        >
+          <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">{promptBox.title}</div>
+              <button className="btn btn-secundario" type="button" onClick={() => setPromptBox(null)}>
+                Fechar
+              </button>
+            </div>
+            <div className="modal-body">
+              <label className="label">{promptBox.label}</label>
+              <input
+                className="input"
+                value={promptBox.value}
+                onChange={(e) => setPromptBox((p) => ({ ...p, value: e.target.value }))}
+              />
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn btn-secundario" type="button" onClick={() => setPromptBox(null)}>
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primario"
+                type="button"
+                onClick={async () => {
+                  const val = promptBox?.value;
+                  const fn = promptBox?.onOk;
+                  setPromptBox(null);
+                  try {
+                    if (fn) await fn(val);
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+    </>
+  );
+}

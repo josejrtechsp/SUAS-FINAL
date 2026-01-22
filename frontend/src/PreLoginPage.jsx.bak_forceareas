@@ -1,0 +1,112 @@
+import React from "react";
+import AreaModules from "./components/AreaModules.jsx";
+import SuasHubPage from "./SuasHubPage.jsx";
+import IdealAreas from "./components/IdealAreas.jsx";
+import ArtigoPage from "./ArtigoPage.jsx";
+
+export default function PreLoginPage() {
+    const mod = new URL(window.location.href).searchParams.get("mod");
+  if (mod === "hub") return <SuasHubPage />;
+
+const u = new URL(window.location.href);
+  const artigo = u.searchParams.get("artigo");
+
+  if (artigo === "no-estrutural") return <ArtigoPage />;
+
+  const openArtigo = () => {
+    const u2 = new URL(window.location.href);
+    u2.searchParams.set("artigo", "no-estrutural");
+    window.history.pushState({}, "", u2.toString());
+    window.location.reload();
+  };
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brandRow">
+            <img className="portal3-logo" src="/ideal-logo-alpha.png" alt="IDEAL" />
+            <div className="portal3-brand">
+<div className="portal3-brand-title">
+                Plataforma Municipal <span className="portal3-brand-highlight">Integrada</span>
+              </div>
+              <div className="portal3-brand-sub">GovTech • Pesquisa • Diagnóstico • Monitoramento • Execução</div>
+            </div>
+          </div>
+
+          <div className="portal3-actions">
+            <input className="portal3-search" placeholder="Buscar no portal (MDS, CNAS, FNAS, Tipificação, NOB SUAS…)" />
+            <button className="btn btn-secundario btn-secundario-mini" type="button">
+              Atualizações oficiais
+            </button>
+            <a className="btn btn-primario btn-primario-mini" href="/?mod=hub">Acessar o painel</a>
+          </div>
+        </div>
+      </header>
+
+      <main className="portal3-main">
+        <section className="portal3-hero">
+          <div className="portal3-hero-inner">
+            <div className="portal3-hero-left">
+              <div className="portal3-kicker">
+                SUAS • Saúde • Educação • Consórcios • Empresas • Campanhas • Portal de referências
+              </div>
+
+              <h1 className="portal3-h1">
+                Do diagnóstico à execução: <span className="portal3-h1-highlight">governança de dados</span> e software para entregar resultado.
+              </h1>
+
+              <p className="portal3-lead">
+                A IDEAL conecta <strong>pesquisa e inteligência</strong>, planejamento e diagnóstico, governança e execução tecnológica — com fluxos, SLAs,
+                rastreabilidade e indicadores.
+              </p>
+
+              <div className="portal3-ctaRow">
+                <a className="btn btn-primario" href="/?mod=hub">Entrar no sistema</a>
+                <a className="portal3-link" href="#areas">Ver serviços ↓</a>
+                <a className="portal3-link" href="#areas">Ver módulos ↓</a>
+                <a className="portal3-link" href="#areas">Atualizações →</a>
+              </div>
+
+              <div className="portal3-chips">
+                <span className="portal3-chip">LGPD por perfil</span>
+                <span className="portal3-chip">Trilha de auditoria</span>
+                <span className="portal3-chip">Fluxo por etapas</span>
+                <span className="portal3-chip">SLA e pendências</span>
+                <span className="portal3-chip">Rede e consórcio</span>
+                <span className="portal3-chip">Dashboards</span>
+                <span className="portal3-chip">Pesquisa e diagnóstico</span>
+              </div>
+            </div>
+
+            <div className="portalV3-feature">
+              <div className="portal3-feature-title">Artigo em destaque</div>
+              <div className="portal3-feature-subtitle" style={{ marginTop: 6, opacity: .8 }}>
+                Leitura rápida e honesta sobre o principal gargalo da gestão municipal.
+              </div>
+
+              <div className="portal3-articleCard" role="button" tabIndex="0" onClick={openArtigo}>
+                <div className="portal3-articlePill">GESTÃO MUNICIPAL</div>
+                <div className="portal3-articleTitle">O Nó Estrutural da Gestão nas Prefeituras</div>
+                <div className="portal3-articleDeck">
+                  Por que bons projetos travam — e o que muda quando existe estrutura, dados e governança.
+                </div>
+                <div className="portal3-articleBullets">
+                  <div>✅ Etapas do ciclo da política pública (diagnóstico → execução → indicadores)</div>
+                  <div>✅ Processos manuais, equipes reduzidas e rotatividade</div>
+                  <div>✅ Dados, PPA e governança: o que precisa virar rotina</div>
+                </div>
+                <div className="portal3-articleCta">Ler o artigo completo →</div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <section className="portal3-section" id="areas">
+          <AreaModules />
+        </section>
+      </main>
+    </div>
+  );
+}

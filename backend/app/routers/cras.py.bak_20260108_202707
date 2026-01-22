@@ -1,0 +1,1022 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlmodel import Session, select
+
+from app.core.db import get_session
+from app.core.auth import get_current_user, pode_acesso_global
+from app.models.usuario import Usuario
+from app.models.pessoa import PessoaRua
+
+from app.models.cras_paif import (
+    PaifAcompanhamento,
+    PaifProtocolo,
+    PaifChecklistItem,
+    PaifPlanoAcao,
+)
+
+router = APIRouter(prefix="/cras", tags=["cras"])
+
+
+PAIF_ETAPAS: List[Dict[str, Any]] = [
+    {"codigo": "TRIAGEM", "ordem": 1, "nome": "Recepção e triagem"},
+    {"codigo": "DIAGNOSTICO", "ordem": 2, "nome": "Avaliação/diagnóstico social"},
+    {"codigo": "PLANO", "ordem": 3, "nome": "Plano (PAIF)"},
+    {"codigo": "EXECUCAO", "ordem": 4, "nome": "Execução"},
+    {"codigo": "MONITORAMENTO", "ordem": 5, "nome": "Monitoramento"},
+    {"codigo": "ENCERRAMENTO", "ordem": 6, "nome": "Encerramento"},
+]
+PAIF_ETAPAS_SET = {e["codigo"] for e in PAIF_ETAPAS}
+
+DEFAULT_CHECKLIST: Dict[str, List[Dict[str, str]]] = {
+    "TRIAGEM": [
+        {"chave": "triagem_demanda", "titulo": "Demanda principal registrada"},
+        {"chave": "triagem_prioridade", "titulo": "Prioridade/vulnerabilidade definida"},
+    ],
+    "DIAGNOSTICO": [
+        {"chave": "diag_vulnerabilidades", "titulo": "Vulnerabilidades mapeadas (operacional)"},
+        {"chave": "diag_rede", "titulo": "Rede/vínculos identificados"},
+    ],
+    "PLANO": [
+        {"chave": "plano_objetivos", "titulo": "Objetivos definidos"},
+        {"chave": "plano_prazos", "titulo": "Ações e prazos definidos"},
+    ],
+    "EXECUCAO": [
+        {"chave": "exec_registros", "titulo": "Atendimentos/ações registrados"},
+        {"chave": "exec_enc", "titulo": "Encaminhamentos registrados (quando houver)"},
+    ],
+    "MONITORAMENTO": [
+        {"chave": "monit_revisao", "titulo": "Revisão do plano realizada"},
+        {"chave": "monit_devolutivas", "titulo": "Devolutivas monitoradas"},
+    ],
+    "ENCERRAMENTO": [
+        {"chave": "enc_resultado", "titulo": "Resultado e motivo do encerramento registrados"},
+        {"chave": "enc_plano_final", "titulo": "Registro final do acompanhamento concluído"},
+    ],
+}
+
+
+def _perfil(usuario: Usuario) -> str:
+    return (getattr(usuario, "perfil", "") or "").strip().lower()
+
+
+def _verifica_acesso_paif(usuario: Usuario, paif: PaifAcompanhamento) -> None:
+    if pode_acesso_global(usuario):
+        return
+    mun_user = getattr(usuario, "municipio_id", None)
+    if mun_user is None:
+        raise HTTPException(status_code=403, detail="Usuário sem município associado.")
+    if getattr(paif, "municipio_id", None) is None:
+        raise HTTPException(status_code=403, detail="PAIF sem município vinculado.")
+    if int(paif.municipio_id) != int(mun_user):
+        raise HTTPException(status_code=403, detail="Acesso negado: PAIF fora do seu município.")
+
+
+def _now() -> datetime:
+    return datetime.utcnow()
+
+
+def _ensure_defaults(session: Session, paif: PaifAcompanhamento, usuario: Usuario) -> PaifProtocolo:
+    protocolo = session.exec(select(PaifProtocolo).where(PaifProtocolo.paif_id == paif.id)).first()
+    if protocolo:
+        return protocolo
+
+    protocolo = PaifProtocolo(
+        paif_id=paif.id,
+        etapa_atual="TRIAGEM",
+        atualizado_em=_now(),
+        atualizado_por_id=getattr(usuario, "id", None),
+        atualizado_por_nome=getattr(usuario, "nome", None) or "Usuário",
+    )
+    session.add(protocolo)
+    session.commit()
+    session.refresh(protocolo)
+
+    existing_keys = set(
+        session.exec(select(PaifChecklistItem.chave).where(PaifChecklistItem.paif_id == paif.id)).all()
+    )
+
+    for etapa, itens in DEFAULT_CHECKLIST.items():
+        for it in itens:
+            if it["chave"] in existing_keys:
+                continue
+            session.add(PaifChecklistItem(paif_id=paif.id, etapa=etapa, chave=it["chave"], titulo=it["titulo"]))
+
+    session.commit()
+    return protocolo
+
+
+@router.get("/paif/etapas")
+def listar_etapas(usuario: Usuario = Depends(get_current_user)):
+    return {"etapas": PAIF_ETAPAS}
+
+
+@router.get("/paif")
+def listar_paif(
+    municipio_id: Optional[int] = Query(default=None),
+    status_filtro: Optional[str] = Query(default=None, alias="status"),
+    pessoa_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    stmt = select(PaifAcompanhamento).order_by(PaifAcompanhamento.aberto_em.desc())
+
+    if status_filtro:
+        stmt = stmt.where(PaifAcompanhamento.status == status_filtro)
+
+    if pessoa_id:
+        stmt = stmt.where(PaifAcompanhamento.pessoa_id == pessoa_id)
+
+    # PAIF_MUNICIPIO_FILTER_PATCH
+    if not pode_acesso_global(usuario):
+        mun_user = getattr(usuario, "municipio_id", None)
+        if mun_user is None:
+            raise HTTPException(status_code=403, detail="Usuário sem município associado.")
+        stmt = stmt.where(PaifAcompanhamento.municipio_id == int(mun_user))
+    else:
+        # global pode filtrar por municipio_id (opcional)
+        if municipio_id is not None:
+            stmt = stmt.where(PaifAcompanhamento.municipio_id == int(municipio_id))
+
+    return list(session.exec(stmt).all())
+
+
+@router.post("/paif", status_code=status.HTTP_201_CREATED)
+def criar_paif(
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    pessoa_id = int(payload.get("pessoa_id") or 0)
+    if not pessoa_id:
+        raise HTTPException(status_code=400, detail="pessoa_id é obrigatório.")
+
+    pessoa = session.get(PessoaRua, pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada.")
+
+    prioridade = (payload.get("prioridade") or "media").strip().lower()
+    if prioridade not in ("baixa", "media", "alta"):
+        prioridade = "media"
+
+    municipio_id = payload.get("municipio_id", None)
+    # PAIF_MUNICIPIO_FILTER_PATCH
+    if not pode_acesso_global(usuario):
+        mun_user = getattr(usuario, "municipio_id", None)
+        if mun_user is None:
+            raise HTTPException(status_code=403, detail="Usuário sem município associado.")
+        municipio_id = int(mun_user)
+
+    paif = PaifAcompanhamento(
+        pessoa_id=pessoa_id,
+        municipio_id=int(municipio_id) if municipio_id is not None else None,
+        prioridade=prioridade,
+        status="ativo",
+        tecnico_responsavel_id=getattr(usuario, "id", None),
+        tecnico_responsavel_nome=getattr(usuario, "nome", None),
+        atualizado_em=_now(),
+    )
+    session.add(paif)
+    session.commit()
+    session.refresh(paif)
+
+    _ensure_defaults(session, paif, usuario)
+
+    return paif
+
+
+@router.get("/paif/{paif_id}/protocolo")
+def obter_protocolo(
+    paif_id: int,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    paif = session.get(PaifAcompanhamento, paif_id)
+    if not paif:
+        raise HTTPException(status_code=404, detail="PAIF não encontrado.")
+
+    _verifica_acesso_paif(usuario, paif)
+    protocolo = _ensure_defaults(session, paif, usuario)
+
+    checklist = list(session.exec(select(PaifChecklistItem).where(PaifChecklistItem.paif_id == paif_id)).all())
+    plano = list(session.exec(select(PaifPlanoAcao).where(PaifPlanoAcao.paif_id == paif_id).order_by(PaifPlanoAcao.criado_em.desc())).all())
+
+    return {"paif": paif, "protocolo": protocolo, "checklist": checklist, "plano": plano}
+
+
+@router.patch("/paif/{paif_id}/protocolo/etapa")
+def atualizar_etapa(
+    paif_id: int,
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    paif = session.get(PaifAcompanhamento, paif_id)
+    if not paif:
+        raise HTTPException(status_code=404, detail="PAIF não encontrado.")
+    _verifica_acesso_paif(usuario, paif)
+
+    etapa = (payload.get("etapa") or "").upper().strip()
+    if etapa not in PAIF_ETAPAS_SET:
+        raise HTTPException(status_code=400, detail="Etapa inválida.")
+
+    protocolo = _ensure_defaults(session, paif, usuario)
+    protocolo.etapa_atual = etapa
+    protocolo.atualizado_em = _now()
+    protocolo.atualizado_por_id = getattr(usuario, "id", None)
+    protocolo.atualizado_por_nome = getattr(usuario, "nome", None)
+
+    paif.atualizado_em = _now()
+
+    session.add(protocolo)
+    session.add(paif)
+    session.commit()
+    session.refresh(protocolo)
+
+    return protocolo
+
+
+@router.post("/paif/{paif_id}/protocolo/checklist/{chave}/toggle")
+def toggle_checklist(
+    paif_id: int,
+    chave: str,
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    paif = session.get(PaifAcompanhamento, paif_id)
+    if not paif:
+        raise HTTPException(status_code=404, detail="PAIF não encontrado.")
+    _verifica_acesso_paif(usuario, paif)
+
+    item = session.exec(
+        select(PaifChecklistItem).where(PaifChecklistItem.paif_id == paif_id, PaifChecklistItem.chave == chave)
+    ).first()
+
+    if not item:
+        # tenta pegar título default
+        etapa = (payload.get("etapa") or "TRIAGEM").upper().strip()
+        titulo = payload.get("titulo")
+        if not titulo:
+            titulo = next((it["titulo"] for it in DEFAULT_CHECKLIST.get(etapa, []) if it["chave"] == chave), chave)
+        item = PaifChecklistItem(paif_id=paif_id, etapa=etapa, chave=chave, titulo=str(titulo))
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+
+    item.concluido = not bool(item.concluido)
+    item.concluido_em = _now() if item.concluido else None
+    item.concluido_por_id = getattr(usuario, "id", None) if item.concluido else None
+    item.concluido_por_nome = getattr(usuario, "nome", None) if item.concluido else None
+
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+@router.post("/paif/{paif_id}/protocolo/plano", status_code=status.HTTP_201_CREATED)
+def criar_acao_plano(
+    paif_id: int,
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    paif = session.get(PaifAcompanhamento, paif_id)
+    if not paif:
+        raise HTTPException(status_code=404, detail="PAIF não encontrado.")
+    _verifica_acesso_paif(usuario, paif)
+
+    objetivo = str(payload.get("objetivo") or "").strip()
+    acao = str(payload.get("acao") or "").strip()
+    responsavel = str(payload.get("responsavel") or "").strip()
+    if not objetivo or not acao or not responsavel:
+        raise HTTPException(status_code=400, detail="objetivo, acao e responsavel são obrigatórios.")
+
+    prazo = payload.get("prazo")
+    prazo_dt = None
+    if prazo:
+        try:
+            prazo_dt = date.fromisoformat(str(prazo))
+        except Exception:
+            prazo_dt = None
+
+    item = PaifPlanoAcao(
+        paif_id=paif_id,
+        objetivo=objetivo,
+        acao=acao,
+        responsavel=responsavel,
+        prazo=prazo_dt,
+        status=str(payload.get("status") or "pendente"),
+        obs=payload.get("obs"),
+        criado_por_id=getattr(usuario, "id", None),
+        criado_por_nome=getattr(usuario, "nome", None),
+        atualizado_por_id=getattr(usuario, "id", None),
+        atualizado_por_nome=getattr(usuario, "nome", None),
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+# === CRAS TRIAGEM + UNIDADES (AUTO) ===
+from datetime import date as _date
+from app.models.cras_unidade import CrasUnidade
+from app.models.cras_triagem import CrasTriagem
+
+def _perfil(usuario: Usuario) -> str:
+    return (getattr(usuario, "perfil", "") or "").strip().lower()
+
+def _mun_usuario(usuario: Usuario) -> int:
+    mun = getattr(usuario, "municipio_id", None)
+    if mun is None:
+        raise HTTPException(status_code=403, detail="Usuário sem município associado.")
+    return int(mun)
+
+def _coerce_municipio(usuario: Usuario, municipio_id: Optional[int]) -> int:
+    if pode_acesso_global(usuario):
+        return int(municipio_id) if municipio_id is not None else _mun_usuario(usuario)
+    return _mun_usuario(usuario)
+
+@router.get("/unidades")
+def listar_unidades(
+    municipio_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    stmt = select(CrasUnidade).where(CrasUnidade.municipio_id == mun, CrasUnidade.ativo == True).order_by(CrasUnidade.nome.asc())
+    return list(session.exec(stmt).all())
+
+@router.post("/unidades", status_code=status.HTTP_201_CREATED)
+def criar_unidade(
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    # Profissional: idealmente só coord/admin cria. No MVP, permitimos coord_municipal/admin/global.
+    perfil = _perfil(usuario)
+    if not (pode_acesso_global(usuario) or perfil in ("admin", "coord_municipal")):
+        raise HTTPException(status_code=403, detail="Apenas admin/coordenação podem criar unidade.")
+
+    nome = str(payload.get("nome") or "").strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="nome é obrigatório.")
+
+    mun = _coerce_municipio(usuario, payload.get("municipio_id"))
+    un = CrasUnidade(municipio_id=mun, nome=nome, ativo=True)
+    session.add(un)
+    session.commit()
+    session.refresh(un)
+    return un
+
+@router.get("/triagens")
+def listar_triagens(
+    municipio_id: Optional[int] = Query(default=None),
+    data: Optional[str] = Query(default=None),
+    status_filtro: Optional[str] = Query(default=None, alias="status"),
+    unidade_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    stmt = select(CrasTriagem).where(CrasTriagem.municipio_id == mun).order_by(CrasTriagem.data_hora.desc())
+
+    if unidade_id:
+        stmt = stmt.where(CrasTriagem.unidade_id == int(unidade_id))
+
+    if status_filtro:
+        stmt = stmt.where(CrasTriagem.status == status_filtro)
+
+    if data:
+        # filtra por dia (UTC) simples: do começo ao fim
+        # (MVP: suficiente. Depois tratamos timezone.)
+        try:
+            d = _date.fromisoformat(data)
+            start = datetime(d.year, d.month, d.day)
+            end = start.replace(hour=23, minute=59, second=59)
+            stmt = stmt.where(CrasTriagem.data_hora >= start, CrasTriagem.data_hora <= end)
+        except Exception:
+            pass
+
+    return list(session.exec(stmt).all())
+
+@router.get("/triagens/resumo")
+def resumo_triagens(
+    municipio_id: Optional[int] = Query(default=None),
+    data: Optional[str] = Query(default=None),
+    unidade_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    stmt = select(CrasTriagem).where(CrasTriagem.municipio_id == mun)
+    if unidade_id:
+        stmt = stmt.where(CrasTriagem.unidade_id == int(unidade_id))
+    if data:
+        try:
+            d = _date.fromisoformat(data)
+            start = datetime(d.year, d.month, d.day)
+            end = start.replace(hour=23, minute=59, second=59)
+            stmt = stmt.where(CrasTriagem.data_hora >= start, CrasTriagem.data_hora <= end)
+        except Exception:
+            pass
+
+    rows = list(session.exec(stmt).all())
+    total = len(rows)
+    abertas = sum(1 for r in rows if r.status == "aberta")
+    encerradas = sum(1 for r in rows if r.status == "encerrada")
+    convertidas = sum(1 for r in rows if r.status == "convertida")
+    altas = sum(1 for r in rows if (r.prioridade or "") == "alta")
+    return {"total": total, "abertas": abertas, "encerradas": encerradas, "convertidas": convertidas, "alta_prioridade": altas}
+
+@router.post("/triagens", status_code=status.HTTP_201_CREATED)
+def criar_triagem(
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, payload.get("municipio_id"))
+
+    unidade_id = payload.get("unidade_id")
+    if not unidade_id:
+        raise HTTPException(status_code=400, detail="unidade_id é obrigatório.")
+
+    un = session.get(CrasUnidade, int(unidade_id))
+    if not un or not un.ativo:
+        raise HTTPException(status_code=404, detail="Unidade CRAS não encontrada.")
+    if int(un.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Unidade fora do seu município.")
+
+    demanda = str(payload.get("demanda_principal") or "").strip()
+    if not demanda:
+        raise HTTPException(status_code=400, detail="demanda_principal é obrigatório.")
+
+    canal = str(payload.get("canal") or "espontanea").strip().lower()
+    if canal not in ("espontanea", "agendada", "telefone"):
+        canal = "espontanea"
+
+    prioridade = str(payload.get("prioridade") or "media").strip().lower()
+    if prioridade not in ("baixa", "media", "alta"):
+        prioridade = "media"
+
+    desfecho = str(payload.get("desfecho") or "em_atendimento").strip().lower()
+    if desfecho not in ("orientado", "agendado", "encaminhado", "abrir_paif", "em_atendimento"):
+        desfecho = "em_atendimento"
+
+    pessoa_id = payload.get("pessoa_id")
+    if pessoa_id:
+        pessoa = session.get(PessoaRua, int(pessoa_id))
+        if not pessoa:
+            raise HTTPException(status_code=404, detail="Pessoa não encontrada.")
+
+    tri = CrasTriagem(
+        municipio_id=mun,
+        unidade_id=int(unidade_id),
+        pessoa_id=int(pessoa_id) if pessoa_id else None,
+        tecnico_id=getattr(usuario, "id", None),
+        tecnico_nome=getattr(usuario, "nome", None),
+        canal=canal,
+        demanda_principal=demanda,
+        prioridade=prioridade,
+        desfecho=desfecho,
+        observacao_operacional=payload.get("observacao_operacional"),
+        status="aberta",
+        data_hora=datetime.utcnow(),
+    )
+    session.add(tri)
+    session.commit()
+    session.refresh(tri)
+    return tri
+
+@router.patch("/triagens/{triagem_id}")
+def atualizar_triagem(
+    triagem_id: int,
+    municipio_id: Optional[int] = Query(default=None),
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    tri = session.get(CrasTriagem, triagem_id)
+    if not tri:
+        raise HTTPException(status_code=404, detail="Triagem não encontrada.")
+    if int(tri.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Triagem fora do seu município.")
+
+    if "status" in payload:
+        st = str(payload.get("status") or "").strip().lower()
+        if st in ("aberta", "encerrada", "convertida"):
+            tri.status = st
+
+    if "desfecho" in payload:
+        d = str(payload.get("desfecho") or "").strip().lower()
+        if d in ("orientado", "agendado", "encaminhado", "abrir_paif", "em_atendimento"):
+            tri.desfecho = d
+
+    if "observacao_operacional" in payload:
+        tri.observacao_operacional = payload.get("observacao_operacional")
+
+    session.add(tri)
+    session.commit()
+    session.refresh(tri)
+    return tri
+
+@router.post("/triagens/{triagem_id}/converter-paif", status_code=status.HTTP_201_CREATED)
+def converter_triagem_em_paif(
+    triagem_id: int,
+    municipio_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    tri = session.get(CrasTriagem, triagem_id)
+    if not tri:
+        raise HTTPException(status_code=404, detail="Triagem não encontrada.")
+    if int(tri.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Triagem fora do seu município.")
+    if not tri.pessoa_id:
+        raise HTTPException(status_code=400, detail="Triagem sem pessoa vinculada. Vincule a pessoa antes de converter.")
+
+    # === Unificação (SUAS): garante pessoa_suas + caso_cras a partir da triagem ===
+    from app.models.pessoa_suas import PessoaSUAS
+    from app.models.caso_cras import CasoCras, CasoCrasHistorico
+    from app.models.pessoa_identidade_link import PessoaIdentidadeLink
+
+    def _digits(v: Optional[str]) -> str:
+        s = (v or "").strip()
+        return "".join(ch for ch in s if ch.isdigit())
+
+    pessoa_rua = session.get(PessoaRua, int(tri.pessoa_id))
+    if not pessoa_rua:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada.")
+
+    # 1) resolve/garante pessoa_suas_id
+    pessoa_suas_id = getattr(tri, "pessoa_suas_id", None)
+    if not pessoa_suas_id:
+        link = session.exec(
+            select(PessoaIdentidadeLink).where(PessoaIdentidadeLink.pessoarua_id == int(pessoa_rua.id))
+        ).first()
+        if link:
+            pessoa_suas_id = link.pessoa_suas_id
+
+    if not pessoa_suas_id:
+        cpf = _digits(getattr(pessoa_rua, "cpf", None)) or None
+        nis = _digits(getattr(pessoa_rua, "nis", None)) or None
+
+        cand = None
+        if cpf:
+            cand = session.exec(select(PessoaSUAS).where(PessoaSUAS.cpf == cpf).where(PessoaSUAS.municipio_id == int(mun))).first()
+        if (cand is None) and nis:
+            cand = session.exec(select(PessoaSUAS).where(PessoaSUAS.nis == nis).where(PessoaSUAS.municipio_id == int(mun))).first()
+
+        if cand is None:
+            nome = (
+                (getattr(pessoa_rua, "nome_social", None) or "").strip()
+                or (getattr(pessoa_rua, "nome_civil", None) or "").strip()
+                or "Pessoa (importada)"
+            )
+            cand = PessoaSUAS(
+                municipio_id=int(mun),
+                nome=nome,
+                nome_social=(getattr(pessoa_rua, "nome_social", None) or None),
+                cpf=cpf,
+                nis=nis,
+                data_nascimento=getattr(pessoa_rua, "data_nascimento", None),
+                telefone=(getattr(pessoa_rua, "telefone", None) or getattr(pessoa_rua, "whatsapp", None) or None),
+                observacoes="Criada automaticamente a partir de Triagem/PAIF (PopRua).",
+            )
+            session.add(cand)
+            session.commit()
+            session.refresh(cand)
+
+        pessoa_suas_id = cand.id
+
+        # garante link
+        link = session.exec(
+            select(PessoaIdentidadeLink).where(PessoaIdentidadeLink.pessoarua_id == int(pessoa_rua.id))
+        ).first()
+        if link:
+            link.pessoa_suas_id = int(pessoa_suas_id)
+            session.add(link)
+        else:
+            session.add(PessoaIdentidadeLink(pessoarua_id=int(pessoa_rua.id), pessoa_suas_id=int(pessoa_suas_id)))
+        session.commit()
+
+    # 2) resolve/garante caso_cras
+    caso = None
+    caso_id = getattr(tri, "caso_id", None)
+    if caso_id:
+        caso = session.get(CasoCras, int(caso_id))
+
+    if caso is None:
+        stmt = (
+            select(CasoCras)
+            .where(
+                CasoCras.municipio_id == int(mun),
+                CasoCras.unidade_id == int(tri.unidade_id),
+                CasoCras.pessoa_id == int(pessoa_suas_id),
+                CasoCras.status != "encerrado",
+            )
+            .order_by(CasoCras.data_abertura.desc())
+        )
+        caso = session.exec(stmt).first()
+
+    if caso is None:
+        caso = CasoCras(
+            municipio_id=int(mun),
+            unidade_id=int(tri.unidade_id),
+            tipo_caso="individuo",
+            pessoa_id=int(pessoa_suas_id),
+            familia_id=None,
+            status="em_andamento",
+            etapa_atual="TRIAGEM",
+            prioridade=str(getattr(tri, "prioridade", "media") or "media"),
+            tecnico_responsavel_id=getattr(usuario, "id", None),
+            observacoes_iniciais=(
+                (getattr(tri, "demanda_principal", None) or "").strip()
+                or (getattr(tri, "observacao_operacional", None) or None)
+            ),
+            atualizado_em=_now(),
+        )
+        session.add(caso)
+        session.commit()
+        session.refresh(caso)
+        session.add(
+            CasoCrasHistorico(
+                caso_id=int(caso.id),
+                etapa="TRIAGEM",
+                tipo_acao="abertura",
+                usuario_id=getattr(usuario, "id", None),
+                usuario_nome=getattr(usuario, "nome", None),
+                observacoes="Caso aberto automaticamente a partir da triagem.",
+            )
+        )
+        session.commit()
+
+    # já convertido (ainda assim garante ponte SUAS + caso)
+    if tri.paif_id:
+        paif = session.get(PaifAcompanhamento, tri.paif_id)
+        if paif:
+            if getattr(paif, "pessoa_suas_id", None) is None:
+                paif.pessoa_suas_id = int(pessoa_suas_id)
+            if getattr(paif, "caso_id", None) is None:
+                paif.caso_id = int(caso.id)
+            session.add(paif)
+        tri.pessoa_suas_id = int(pessoa_suas_id)
+        tri.caso_id = int(caso.id)
+        session.add(tri)
+        session.commit()
+        session.refresh(tri)
+        return {"triagem": tri, "paif": paif, "caso": caso}
+
+    paif = PaifAcompanhamento(
+        pessoa_id=int(tri.pessoa_id),
+        pessoa_suas_id=int(pessoa_suas_id),
+        municipio_id=int(tri.municipio_id),
+        caso_id=int(caso.id),
+        prioridade=str(getattr(tri, "prioridade", "media") or "media"),
+        status="ativo",
+        tecnico_responsavel_id=getattr(usuario, "id", None),
+        tecnico_responsavel_nome=getattr(usuario, "nome", None),
+        atualizado_em=_now(),
+    )
+    session.add(paif)
+    session.commit()
+    session.refresh(paif)
+
+    _ensure_defaults(session, paif, usuario)
+
+    tri.paif_id = paif.id
+    tri.pessoa_suas_id = int(pessoa_suas_id)
+    tri.caso_id = int(caso.id)
+    tri.status = "convertida"
+    tri.desfecho = "abrir_paif"
+    session.add(tri)
+    session.commit()
+    session.refresh(tri)
+
+    return {"triagem": tri, "paif": paif, "caso": caso}
+
+
+# === CRAS ENCAMINHAMENTOS DEVOLUTIVA (AUTO) ===
+from datetime import timedelta
+from app.models.cras_encaminhamento import CrasEncaminhamento, CrasEncaminhamentoEvento
+from app.models.cras_unidade import CrasUnidade
+
+CRAS_ENC_STATUS_ORDEM = ["enviado", "recebido", "agendado", "atendido", "devolutiva", "concluido"]
+CRAS_ENC_VALIDOS = set(CRAS_ENC_STATUS_ORDEM + ["cancelado"])
+
+DESTINOS_TIPO = [
+  {"codigo": "saude", "nome": "Saúde"},
+  {"codigo": "educacao", "nome": "Educação"},
+  {"codigo": "habitacao", "nome": "Habitação"},
+  {"codigo": "trabalho", "nome": "Trabalho/Renda"},
+  {"codigo": "creas", "nome": "CREAS"},
+  {"codigo": "osc", "nome": "OSC / Terceiro Setor"},
+  {"codigo": "outro", "nome": "Outro"},
+]
+
+def _enc_now() -> datetime:
+    return datetime.utcnow()
+
+def _enc_idx(s: str) -> int:
+    try:
+        return CRAS_ENC_STATUS_ORDEM.index(s)
+    except ValueError:
+        return -1
+
+def _enc_next(atual: str) -> Optional[str]:
+    if atual in ("cancelado", "concluido"):
+        return None
+    idx = _enc_idx(atual)
+    if idx < 0:
+        return "recebido"
+    if idx >= len(CRAS_ENC_STATUS_ORDEM) - 1:
+        return None
+    return CRAS_ENC_STATUS_ORDEM[idx + 1]
+
+def _enc_add_evento(session: Session, enc_id: int, tipo: str, detalhe: Optional[str], por_nome: Optional[str]):
+    session.add(CrasEncaminhamentoEvento(
+        encaminhamento_id=enc_id,
+        tipo=tipo,
+        detalhe=detalhe,
+        por_nome=por_nome,
+        em=_enc_now(),
+    ))
+
+def _enc_to_dict(enc: CrasEncaminhamento, eventos: Optional[list] = None) -> dict:
+    return {
+        "id": enc.id,
+        "municipio_id": enc.municipio_id,
+        "unidade_id": enc.unidade_id,
+        "pessoa_id": enc.pessoa_id,
+        "paif_id": enc.paif_id,
+        "destino_tipo": enc.destino_tipo,
+        "destino_nome": enc.destino_nome,
+        "motivo": enc.motivo,
+        "observacao_operacional": enc.observacao_operacional,
+        "status": enc.status,
+        "prazo_devolutiva_dias": enc.prazo_devolutiva_dias,
+        "enviado_em": enc.enviado_em.isoformat() if enc.enviado_em else None,
+        "recebido_em": enc.recebido_em.isoformat() if enc.recebido_em else None,
+        "agendado_em": enc.agendado_em.isoformat() if enc.agendado_em else None,
+        "atendido_em": enc.atendido_em.isoformat() if enc.atendido_em else None,
+        "devolutiva_em": enc.devolutiva_em.isoformat() if enc.devolutiva_em else None,
+        "concluido_em": enc.concluido_em.isoformat() if enc.concluido_em else None,
+        "cancelado_em": enc.cancelado_em.isoformat() if enc.cancelado_em else None,
+        "criado_por_nome": enc.criado_por_nome,
+        "atualizado_por_nome": enc.atualizado_por_nome,
+        "eventos": eventos or [],
+    }
+
+@router.get("/encaminhamentos/destinos")
+def cras_destinos(usuario: Usuario = Depends(get_current_user)):
+    return {
+        "destinos": DESTINOS_TIPO,
+        "status_ordem": CRAS_ENC_STATUS_ORDEM,
+        "status_validos": list(CRAS_ENC_VALIDOS),
+    }
+
+@router.post("/encaminhamentos", status_code=status.HTTP_201_CREATED)
+def cras_criar_encaminhamento(
+    payload: Dict[str, Any],
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, payload.get("municipio_id"))
+    unidade_id = payload.get("unidade_id")
+    if not unidade_id:
+        raise HTTPException(status_code=400, detail="unidade_id é obrigatório.")
+
+    un = session.get(CrasUnidade, int(unidade_id))
+    if not un or not un.ativo:
+        raise HTTPException(status_code=404, detail="Unidade CRAS não encontrada.")
+    if int(un.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Unidade fora do seu município.")
+
+    destino_tipo = str(payload.get("destino_tipo") or "").strip().lower()
+    if destino_tipo not in {d["codigo"] for d in DESTINOS_TIPO}:
+        raise HTTPException(status_code=400, detail="destino_tipo inválido.")
+
+    destino_nome = str(payload.get("destino_nome") or "").strip()
+    if not destino_nome:
+        raise HTTPException(status_code=400, detail="destino_nome é obrigatório.")
+
+    motivo = str(payload.get("motivo") or "").strip()
+    if not motivo:
+        raise HTTPException(status_code=400, detail="motivo é obrigatório.")
+
+    pessoa_id = payload.get("pessoa_id")
+    if pessoa_id:
+        pessoa = session.get(PessoaRua, int(pessoa_id))
+        if not pessoa:
+            raise HTTPException(status_code=404, detail="Pessoa não encontrada.")
+
+    paif_id = payload.get("paif_id")
+    if paif_id:
+        paif = session.get(PaifAcompanhamento, int(paif_id))
+        if not paif:
+            raise HTTPException(status_code=404, detail="PAIF não encontrado.")
+
+    prazo = payload.get("prazo_devolutiva_dias", 7)
+    try:
+        prazo = int(prazo)
+        if prazo < 1: prazo = 7
+    except Exception:
+        prazo = 7
+
+    enc = CrasEncaminhamento(
+        municipio_id=int(mun),
+        unidade_id=int(unidade_id),
+        pessoa_id=int(pessoa_id) if pessoa_id else None,
+        paif_id=int(paif_id) if paif_id else None,
+        destino_tipo=destino_tipo,
+        destino_nome=destino_nome,
+        motivo=motivo,
+        observacao_operacional=payload.get("observacao_operacional"),
+        status="enviado",
+        enviado_em=_enc_now(),
+        prazo_devolutiva_dias=prazo,
+        criado_por_nome=getattr(usuario, "nome", None),
+        atualizado_por_nome=getattr(usuario, "nome", None),
+        criado_em=_enc_now(),
+        atualizado_em=_enc_now(),
+    )
+    session.add(enc)
+    session.commit()
+    session.refresh(enc)
+
+    _enc_add_evento(session, enc.id, "enviado", "Encaminhamento registrado.", getattr(usuario, "nome", None))
+    session.commit()
+    session.refresh(enc)
+
+    return _enc_to_dict(enc)
+
+@router.get("/encaminhamentos")
+def cras_listar_encaminhamentos(
+    municipio_id: Optional[int] = None,
+    unidade_id: Optional[int] = None,
+    status_filtro: Optional[str] = Query(default=None, alias="status"),
+    pessoa_id: Optional[int] = None,
+    paif_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    stmt = select(CrasEncaminhamento).where(CrasEncaminhamento.municipio_id == int(mun)).order_by(CrasEncaminhamento.id.desc())
+    if unidade_id:
+        stmt = stmt.where(CrasEncaminhamento.unidade_id == int(unidade_id))
+    if status_filtro:
+        stmt = stmt.where(CrasEncaminhamento.status == status_filtro)
+    if pessoa_id:
+        stmt = stmt.where(CrasEncaminhamento.pessoa_id == int(pessoa_id))
+    if paif_id:
+        stmt = stmt.where(CrasEncaminhamento.paif_id == int(paif_id))
+
+    itens = list(session.exec(stmt).all())
+    return [_enc_to_dict(x) for x in itens]
+
+@router.get("/encaminhamentos/sem-devolutiva")
+def cras_sem_devolutiva(
+    municipio_id: Optional[int] = None,
+    unidade_id: Optional[int] = None,
+    destino_tipo: Optional[str] = None,
+    dias: Optional[int] = Query(default=None, ge=1, le=90),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Sem devolutiva = encaminhamento aberto e atrasado.
+    Regra:
+      - Se dias for informado: usa dias como limite (override)
+      - Se dias não for informado: usa prazo_devolutiva_dias do próprio encaminhamento
+    Filtros:
+      - unidade_id (opcional)
+      - destino_tipo (opcional)
+    """
+    mun = _coerce_municipio(usuario, municipio_id)
+    stmt = select(CrasEncaminhamento).where(CrasEncaminhamento.municipio_id == int(mun))
+    if unidade_id:
+        stmt = stmt.where(CrasEncaminhamento.unidade_id == int(unidade_id))
+    if destino_tipo:
+        stmt = stmt.where(CrasEncaminhamento.destino_tipo == str(destino_tipo).strip().lower())
+
+    now = _enc_now()
+    itens = list(session.exec(stmt).all())
+
+    out = []
+    for e in itens:
+        if e.status in ("devolutiva", "concluido", "cancelado"):
+            continue
+
+        ref = e.enviado_em or e.criado_em
+        if not ref:
+            continue
+
+        delta = now - ref
+        dias_aberto = delta.days
+
+        prazo_usado = int(dias) if dias is not None else int(getattr(e, "prazo_devolutiva_dias", 7) or 7)
+
+        if dias_aberto >= prazo_usado:
+            out.append({
+                **_enc_to_dict(e),
+                "dias_aberto": dias_aberto,
+                "prazo_usado": prazo_usado,
+                "atrasado": True,
+            })
+
+    out.sort(key=lambda x: x.get("dias_aberto", 0), reverse=True)
+    return out
+
+@router.post("/encaminhamentos/{enc_id}/status")
+def cras_atualizar_status(
+    enc_id: int,
+    payload: Dict[str, Any],
+    municipio_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    mun = _coerce_municipio(usuario, municipio_id)
+    enc = session.get(CrasEncaminhamento, enc_id)
+    if not enc:
+        raise HTTPException(status_code=404, detail="Encaminhamento não encontrado.")
+    if int(enc.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Encaminhamento fora do seu município.")
+
+    novo = str(payload.get("status") or "").strip().lower()
+    detalhe = (payload.get("detalhe") or "").strip() or None
+
+    if novo not in CRAS_ENC_VALIDOS:
+        raise HTTPException(status_code=400, detail="Status inválido.")
+
+    atual = enc.status or "enviado"
+    if atual in ("concluido", "cancelado"):
+        raise HTTPException(status_code=400, detail="Fluxo já finalizado.")
+
+    if novo == "cancelado":
+        enc.status = "cancelado"
+        enc.cancelado_em = enc.cancelado_em or _enc_now()
+    else:
+        prox = _enc_next(atual)
+        if prox and novo != prox:
+            raise HTTPException(status_code=400, detail=f"Fora de ordem. Atual={atual}. Próximo permitido={prox}.")
+        enc.status = novo
+        now = _enc_now()
+        if novo == "recebido": enc.recebido_em = enc.recebido_em or now
+        if novo == "agendado": enc.agendado_em = enc.agendado_em or now
+        if novo == "atendido": enc.atendido_em = enc.atendido_em or now
+        if novo == "devolutiva": enc.devolutiva_em = enc.devolutiva_em or now
+        if novo == "concluido": enc.concluido_em = enc.concluido_em or now
+
+    enc.atualizado_em = _enc_now()
+    enc.atualizado_por_nome = getattr(usuario, "nome", None)
+
+    session.add(enc)
+    session.commit()
+    session.refresh(enc)
+
+    _enc_add_evento(session, enc.id, enc.status, detalhe, getattr(usuario, "nome", None))
+    session.commit()
+    session.refresh(enc)
+
+    return _enc_to_dict(enc)
+
+
+@router.post("/encaminhamentos/{enc_id}/cobrar")
+def cras_cobrar_devolutiva(
+    enc_id: int,
+    payload: Dict[str, Any],
+    municipio_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Registra uma cobrança de devolutiva (evento) sem alterar o status.
+    """
+    mun = _coerce_municipio(usuario, municipio_id)
+    enc = session.get(CrasEncaminhamento, enc_id)
+    if not enc:
+        raise HTTPException(status_code=404, detail="Encaminhamento não encontrado.")
+    if int(enc.municipio_id) != int(mun):
+        raise HTTPException(status_code=403, detail="Encaminhamento fora do seu município.")
+
+    detalhe = str(payload.get("detalhe") or "").strip()
+    if not detalhe:
+        raise HTTPException(status_code=400, detail="detalhe é obrigatório (texto curto da cobrança).")
+
+    # evento (não muda status)
+    _enc_add_evento(session, enc.id, "cobranca", detalhe, getattr(usuario, "nome", None))
+    enc.atualizado_em = _enc_now()
+    enc.atualizado_por_nome = getattr(usuario, "nome", None)
+
+    session.add(enc)
+    session.commit()
+    session.refresh(enc)
+
+    return _enc_to_dict(enc)

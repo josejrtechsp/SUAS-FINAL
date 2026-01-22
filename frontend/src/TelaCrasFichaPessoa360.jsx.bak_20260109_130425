@@ -1,0 +1,472 @@
+import { useEffect, useMemo, useState } from "react";
+import ProntuarioQuickExport from "./ProntuarioQuickExport.jsx";
+
+
+function fmt(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("pt-BR");
+}
+
+function chip(kind) {
+  const base = { padding: "6px 12px", borderRadius: 999, fontWeight: 900, fontSize: 12, border: "1px solid rgba(2,6,23,.10)", background: "rgba(148,163,184,.10)" };
+  if (kind === "alta") return { ...base, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.25)" };
+  if (kind === "media") return { ...base, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.25)" };
+  if (kind === "ok") return { ...base, background: "rgba(34,197,94,.12)", border: "1px solid rgba(34,197,94,.25)" };
+  return base;
+}
+
+export default function TelaCrasFichaPessoa360({
+  apiBase,
+  apiFetch,
+  pessoaId,
+  onNavigate,
+  onBackFamilia,
+  familiaContextoId,
+  forcedTab,
+  hideTabBar = false,
+}) {
+  const [tab, setTab] = useState("resumo");
+
+  // permite controle externo (subtelas do header)
+  useEffect(() => {
+    if (!forcedTab) return;
+    setTab(forcedTab);
+  }, [forcedTab]);
+  const [highlight, setHighlight] = useState("");
+  const [showOnlyContext, setShowOnlyContext] = useState(true);
+
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [pessoas, setPessoas] = useState([]);
+  const [pessoaSel, setPessoaSel] = useState(pessoaId || null);
+  const [data, setData] = useState(null);
+
+  // Encaminhamentos SUAS (banco): pendências e timeline entram no 360
+  const [suas, setSuas] = useState({ pendencias: [], timeline: [] });
+
+  const [anexos, setAnexos] = useState([]);
+  const [anTitulo, setAnTitulo] = useState("");
+  const [anUrl, setAnUrl] = useState("");
+  const [anTipo, setAnTipo] = useState("");
+
+
+  const periodoStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+
+  // Consome flags do drill-down (relatórios)
+  useEffect(() => {
+    try {
+      const ttab = localStorage.getItem("cras_ficha_tab");
+      const hh = localStorage.getItem("cras_ficha_highlight");
+      if (ttab) setTab(ttab);
+      if (hh) { setHighlight(hh); setShowOnlyContext(true); }
+      localStorage.removeItem("cras_ficha_tab");
+      localStorage.removeItem("cras_ficha_highlight");
+    } catch {}
+  }, []);
+
+  async function loadPessoas() {
+    try {
+      const r = await apiFetch(`${apiBase}/cras/cadastros/pessoas`);
+      if (!r.ok) return setPessoas([]);
+      const j = await r.json();
+      setPessoas(Array.isArray(j) ? j : []);
+    } catch {
+      setPessoas([]);
+    }
+  }
+
+  async function loadFicha() {
+    if (!pessoaSel) { setData(null); return; }
+    setErro("");
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      const d = new Date();
+      qs.set("ano", String(d.getFullYear()));
+      qs.set("mes", String(d.getMonth() + 1));
+      qs.set("limite_faltas_seguidas", "3");
+      qs.set("presenca_min", "0.75");
+      const r = await apiFetch(`${apiBase}/cras/ficha/pessoas/${Number(pessoaSel)}?${qs.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      setData(await r.json());
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao carregar ficha.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  function _isSuasAberto(enc) {
+    const st = String(enc?.status || "").toLowerCase();
+    return st && st !== "concluido" && st !== "concluído" && st !== "cancelado";
+  }
+  function _isSuasVencido(enc) {
+    if (!_isSuasAberto(enc)) return false;
+    const st = String(enc?.status || "").toLowerCase();
+    if (st === "retorno_enviado") return false;
+    const pr = enc?.prazo_retorno;
+    if (!pr) return false;
+    try {
+      const prazo = new Date(String(pr) + "T00:00:00").getTime();
+      const hoje = new Date(new Date().toISOString().slice(0,10) + "T00:00:00").getTime();
+      return prazo < hoje;
+    } catch { return false; }
+  }
+
+  async function loadSuas360() {
+    const alvo = pessoaSel;
+    if (!alvo) { setSuas({ pendencias: [], timeline: [] }); return; }
+    try {
+      const params = new URLSearchParams();
+      params.set("modulo", "CRAS");
+      params.set("view", "all");
+      params.set("include_events", "0");
+      params.set("pessoa_id", String(alvo));
+      // no Pessoa360, se tiver familia carregada, soma também
+      try {
+        const fid = data?.familia?.id;
+        if (fid && "pessoa" === "pessoa") params.set("familia_id", String(fid));
+      } catch {}
+      const r = await apiFetch(`${apiBase}/suas/encaminhamentos?${params.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : [];
+
+      const vencidos = arr.filter(_isSuasVencido).length;
+      const abertos = arr.filter(_isSuasAberto).length;
+
+      const pend = [];
+      if (vencidos) {
+        pend.push({
+          tipo: "suas_sem_devolutiva",
+          gravidade: vencidos >= 2 ? "alta" : "media",
+          referencia: "Encaminhamentos SUAS",
+          detalhe: `${vencidos} encaminhamento(s) com prazo vencido e sem contrarreferência.`,
+          sugerido: "Cobrar devolutiva, registrar retorno e concluir quando resolvido.",
+        });
+      } else if (abertos) {
+        pend.push({
+          tipo: "suas_abertos",
+          gravidade: "media",
+          referencia: "Encaminhamentos SUAS",
+          detalhe: `${abertos} encaminhamento(s) SUAS em aberto.`,
+          sugerido: "Acompanhar status e registrar devolutiva quando houver.",
+        });
+      }
+
+      const tl = [];
+      arr.slice(0, 80).forEach((e) => {
+        const origem = String(e?.origem_modulo || "").toUpperCase();
+        const destino = String(e?.destino_modulo || "").toUpperCase();
+        const other = origem === "CRAS" ? (destino || "SUAS") : (origem || "SUAS");
+        const when = e?.retorno_em || e?.cobranca_ultimo_em || e?.status_em || e?.atualizado_em || e?.criado_em || null;
+        const st = String(e?.status || "").toUpperCase();
+        const titulo = `SUAS · ${other} · ${st}`;
+        const detalhe = [
+          e?.assunto ? `Assunto: ${e.assunto}` : null,
+          e?.prazo_retorno ? `Prazo: ${e.prazo_retorno}` : null,
+          e?.motivo ? `Motivo: ${String(e.motivo).slice(0, 380)}` : null,
+          e?.retorno_texto ? `Retorno: ${String(e.retorno_texto).slice(0, 380)}` : null,
+          e?.cobranca_ultimo_texto ? `Cobrança: ${String(e.cobranca_ultimo_texto).slice(0, 240)}` : null,
+        ].filter(Boolean).join(" · ");
+        tl.push({ tipo: "suas_encaminhamento", quando: when, titulo, autor: e?.atualizado_por_nome || e?.criado_por_nome || null, detalhe, caso_id: e?.origem_caso_id || e?.destino_caso_id || null });
+      });
+      tl.sort((a,b) => (b?.quando ? new Date(b.quando).getTime():0) - (a?.quando ? new Date(a.quando).getTime():0));
+      setSuas({ pendencias: pend, timeline: tl.slice(0, 200) });
+    } catch (e) {
+      console.error(e);
+      setSuas({ pendencias: [], timeline: [] });
+    }
+  }
+
+  // Resolver pendência (automação)
+  async function resolverPend(p) {
+    if (!p) return;
+    try {
+      if (p.tipo === "cadunico_inexistente") {
+        const unidade = Number(localStorage.getItem("cras_unidade_ativa") || 1);
+        const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unidade_id: unidade, pessoa_id: Number(pessoaSel), observacoes: "Criado via Ficha" }),
+        });
+        if (r.ok) await loadFicha();
+        return;
+      }
+      if (p.tipo === "pia_inexistente") {
+        const casoId = data?.casos_cras?.[0]?.id;
+        if (!casoId) return;
+        const r = await apiFetch(`${apiBase}/cras/casos/${Number(casoId)}/pia/plano`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resumo_diagnostico: "Criado via Ficha", objetivos: "—" }),
+        });
+        if (r.ok) await loadFicha();
+        return;
+      }
+      if (p.tipo && p.tipo.startsWith("scfv_")) {
+        onNavigate?.("scfv", { turmaId: data?.scfv?.participacoes?.[0]?.turma_id || null, mes: periodoStr, limite: 3, presMin: 75, auto: true, scrollRel: true });
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível resolver automaticamente.");
+    }
+  }
+
+  // Auditoria: se abriu via relatório (highlight), registra evento
+  useEffect(() => {
+    if (!highlight || !pessoaSel) return;
+    (async () => {
+      try {
+        await apiFetch(`${apiBase}/cras/ficha/eventos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alvo_tipo: "pessoa", alvo_id: Number(pessoaSel), tipo: "abertura_via_relatorio", detalhe: highlight }),
+        });
+      } catch {}
+    })();
+    // eslint-disable-next-line
+  }, [highlight, pessoaSel]);
+
+  
+  async function loadAnexos() {
+    if (!pessoaSel) { setAnexos([]); return; }
+    try {
+      const qs = new URLSearchParams();
+      qs.set("alvo_tipo", "pessoa");
+      qs.set("alvo_id", String(pessoaSel));
+      const r = await apiFetch(`${apiBase}/cras/ficha/anexos?${qs.toString()}`);
+      if (!r.ok) { setAnexos([]); return; }
+      const j = await r.json();
+      setAnexos(Array.isArray(j) ? j : []);
+    } catch {
+      setAnexos([]);
+    }
+  }
+
+  async function addAnexo() {
+    if (!pessoaSel) return;
+    if (!anTitulo.trim() || !anUrl.trim()) return setErro("Título e URL são obrigatórios.");
+    setErro("");
+    try {
+      const payload = { alvo_tipo: "pessoa", alvo_id: Number(pessoaSel), titulo: anTitulo.trim(), url: anUrl.trim(), tipo: anTipo || null };
+      const r = await apiFetch(`${apiBase}/cras/ficha/anexos`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(await r.text());
+      setAnTitulo(""); setAnUrl(""); setAnTipo("");
+      await loadAnexos();
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao salvar anexo.");
+    }
+  }
+
+useEffect(() => { loadPessoas(); }, []); // eslint-disable-line
+  useEffect(() => { if (pessoaId) setPessoaSel(pessoaId); }, [pessoaId]);
+  useEffect(() => { loadFicha(); }, [pessoaSel]); // eslint-disable-line
+
+  useEffect(() => { loadSuas360(); }, [pessoaSel, data?.familia?.id]); // eslint-disable-line
+  const pend = useMemo(() => {
+    const a = Array.isArray(suas?.pendencias) ? suas.pendencias : [];
+    const b = Array.isArray(data?.pendencias) ? data.pendencias : (data?.pendencias || []);
+    return [...a, ...b];
+  }, [suas, data]);
+  const conds = data?.condicionalidades || [];
+  const tl = useMemo(() => {
+    const a = Array.isArray(suas?.timeline) ? suas.timeline : [];
+    const b = Array.isArray(data?.timeline) ? data.timeline : (data?.timeline || []);
+    const all = [...a, ...b];
+    all.sort((x,y)=>{
+      const tx = x?.quando ? new Date(x.quando).getTime() : 0;
+      const ty = y?.quando ? new Date(y.quando).getTime() : 0;
+      return ty - tx;
+    });
+    return all;
+  }, [suas, data]);
+  const pendView = useMemo(() => {
+    if (!highlight) return pend;
+    const arr = [...pend].sort((a, b) => (a.tipo === highlight ? -1 : 0) - (b.tipo === highlight ? -1 : 0));
+    return showOnlyContext ? arr.filter((x) => x.tipo === highlight) : arr;
+  }, [pend, highlight, showOnlyContext]);
+
+  return (
+    <div className="layout-1col">
+      <ProntuarioQuickExport apiBase={apiBase} apiFetch={apiFetch} pessoaId={pessoaSel} familiaId={data?.familia?.id || null} />
+      <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Ficha do Usuário (360°)</div>
+            <div className="texto-suave">Período: <strong>{periodoStr}</strong></div>
+          </div>
+
+          <div style={{ minWidth: 420 }}>
+            <div className="texto-suave">Selecionar pessoa: <strong>{pessoas.length}</strong></div>
+            <select
+              className="input"
+              value={pessoaSel || ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPessoaSel(v ? Number(v) : null);
+                try { if (v) localStorage.setItem("cras_ficha_pessoa_id", v); } catch {}
+              }}
+            >
+              <option value="">Selecione…</option>
+              {pessoas.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nome_social ? `${p.nome_social} (${p.nome})` : p.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {familiaContextoId ? (
+              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={onBackFamilia}>
+                Voltar p/ Família #{familiaContextoId}
+              </button>
+            ) : null}
+            <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={loadFicha}>Atualizar</button>
+          </div>
+        </div>
+        {!hideTabBar ? (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            {["resumo","pendencias","condicionalidades","timeline","documentos"].map((k) => (
+            <button key={k} type="button" className={"btn btn-secundario btn-secundario-mini" + (tab === k ? " btn-primario" : "")} onClick={() => setTab(k)}>
+              {k === "resumo" ? "Resumo" : k === "pendencias" ? "Pendências" : k === "condicionalidades" ? "Condicionalidades" : k === "timeline" ? "Timeline" : "Documentos"}
+            </button>
+          ))}
+        </div>
+        ) : null}
+
+        {erro ? <div className="card" style={{ padding: 12, borderRadius: 14, marginTop: 10 }}><strong>{erro}</strong></div> : null}
+        {loading ? <div className="texto-suave" style={{ marginTop: 10 }}>Carregando…</div> : null}
+      </div>
+
+      {data ? (
+        <>
+          {tab === "resumo" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Resumo</div>
+              <div className="texto-suave" style={{ marginTop: 8 }}>
+                Nome: <strong>{data.pessoa?.nome}</strong> · CPF: <strong>{data.pessoa?.cpf || "—"}</strong> · NIS: <strong>{data.pessoa?.nis || "—"}</strong>
+              </div>
+              <div className="texto-suave">Pendências: <strong>{pend.length}</strong> · Eventos: <strong>{tl.length}</strong></div>
+            </div>
+          ) : null}
+
+          {tab === "pendencias" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Pendências</div>
+
+              {highlight ? (
+                <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 10, border: "1px solid rgba(99,102,241,.22)", background: "rgba(239,246,255,.6)" }}>
+                  <div><strong>Contexto:</strong> {highlight}</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                    <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => setShowOnlyContext((v) => !v)}>
+                      {showOnlyContext ? "Ver todas" : "Ver só contexto"}
+                    </button>
+                    <button className="btn btn-primario btn-primario-mini" type="button" onClick={() => {
+                      const target = (pend || []).find((x) => x.tipo === highlight);
+                      if (target) resolverPend(target);
+                    }}>
+                      Resolver contexto
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {pendView.map((p, i) => (
+                  <div key={i} className="card" style={{ padding: 12, borderRadius: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900 }}>{p.tipo}</div>
+                      <span style={chip(p.gravidade)}>{p.gravidade}</span>
+                    </div>
+                    <div className="texto-suave" style={{ marginTop: 8 }}>{p.detalhe}</div>
+                    {p.sugerido ? <div className="texto-suave">Sugestão: <strong>{p.sugerido}</strong></div> : null}
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                      <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => resolverPend(p)}>Resolver</button>
+                    </div>
+                  </div>
+                ))}
+                {!pendView.length ? <div className="texto-suave">Sem pendências nesse filtro ✅</div> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "condicionalidades" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Condicionalidades</div>
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {conds.map((c, i) => (
+                  <div key={i} className="card" style={{ padding: 12, borderRadius: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900 }}>{c.programa}</div>
+                      <span style={chip(c.ok ? "ok" : "media")}>{c.ok ? "OK" : "ATENÇÃO"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "timeline" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Timeline (auditável)</div>
+              <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 420, overflow: "auto" }}>
+                {tl.map((e, i) => (
+                  <div key={i} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                    <div style={{ fontWeight: 900 }}>{e.titulo}</div>
+                    <div className="texto-suave">{fmt(e.quando)}{e.autor ? ` · ${e.autor}` : ""}</div>
+                    {e.detalhe ? <div className="texto-suave">Obs: {e.detalhe}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "documentos" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Documentos/Anexos</div>
+              <div className="texto-suave" style={{ marginTop: 8 }}>Salvar links (Drive, SEI, etc.) para auditoria.</div>
+
+              <div className="card" style={{ padding: 12, borderRadius: 16, marginTop: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: 10 }}>
+                  <input className="input" placeholder="Título" value={anTitulo} onChange={(e) => setAnTitulo(e.target.value)} />
+                  <input className="input" placeholder="URL" value={anUrl} onChange={(e) => setAnUrl(e.target.value)} />
+                  <input className="input" placeholder="Tipo (opcional)" value={anTipo} onChange={(e) => setAnTipo(e.target.value)} />
+                  <button className="btn btn-primario" type="button" onClick={addAnexo}>Adicionar</button>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                {anexos.map((a) => (
+                  <div key={a.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                    <div style={{ fontWeight: 900 }}>{a.titulo}</div>
+                    <div className="texto-suave">{a.tipo ? `Tipo: ${a.tipo} · ` : ""}{fmt(a.criado_em)}</div>
+                    <div className="texto-suave" style={{ marginTop: 6 }}>
+                      <a href={a.url} target="_blank" rel="noreferrer">{a.url}</a>
+                    </div>
+                  </div>
+                ))}
+                {!anexos.length ? <div className="texto-suave">Nenhum anexo ainda.</div> : null}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+
+// FICHA_SUBTABS_HELP_V1

@@ -1,0 +1,231 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { getSuasOverdueForModulo } from "./domain/suasEncaminhamentosStore.js";
+
+export default function TelaCrasInicioDashboard({
+  apiBase,
+  apiFetch,
+  onNavigate,
+  unidadeId,
+  municipioId,
+}) {
+  const [data, setData] = useState(null);
+  const [tarefasResumo, setTarefasResumo] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function fetchJson(url) {
+    const res = await apiFetch(url);
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.detail || `Falha (HTTP ${res.status})`);
+    return json;
+  }
+
+  function withQuery(path) {
+    const u = new URL(`${apiBase}${path}`);
+    if (unidadeId) u.searchParams.set("unidade_id", String(unidadeId));
+    if (municipioId) u.searchParams.set("municipio_id", String(municipioId));
+    return u.toString();
+  }
+
+  async function load() {
+    setLoading(true);
+    setErro(null);
+    try {
+      const ov = await fetchJson(withQuery("/cras/relatorios/overview"));
+      setData(ov);
+
+      try {
+        setTarefasResumo(await fetchJson(withQuery("/cras/tarefas/resumo")));
+      } catch {
+        setTarefasResumo(null);
+      }
+    } catch (e) {
+      setErro((e && (e.detail || e.message)) || (typeof e === "string" ? e : JSON.stringify(e)));
+      setData(null);
+      setTarefasResumo(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [unidadeId, municipioId]);
+
+  const get = (...keys) => {
+    const d = data || {};
+    for (const k of keys) {
+      const parts = String(k).split(".");
+      let cur = d;
+      let ok = true;
+      ok = true;
+      for (const p of parts) {
+        if (cur && Object.prototype.hasOwnProperty.call(cur, p)) cur = cur[p];
+        else {
+          ok = false;
+          break;
+        }
+      }
+      if (ok && cur !== undefined && cur !== null) return cur;
+    }
+    return "—";
+  };
+
+  const cards = useMemo(
+    () => [
+      { k: "Usuários", v: get("pessoas_total", "total_pessoas", "pessoas"), hint: "Pessoas cadastradas/atendidas" },
+      { k: "Famílias", v: get("familias_total", "total_familias", "familias"), hint: "Famílias cadastradas" },
+      { k: "Casos abertos", v: get("casos_abertos", "total_casos_abertos", "casos.abertos"), hint: "Casos em andamento" },
+      { k: "Pendências (SLA)", v: get("pendencias_sla", "total_pendencias", "pendencias.total"), hint: "Itens vencendo/vencidos" },
+      { k: "SCFV presença (mês)", v: get("scfv_presencas_mes", "scfv.presencas_mes"), hint: "Presenças registradas no mês" },
+      { k: "SCFV ausências (mês)", v: get("scfv_ausencias_mes", "scfv.ausencias_mes"), hint: "Ausências no mês" },
+      { k: "Programas presença (mês)", v: get("programas_presencas_mes", "programas.presencas_mes"), hint: "Presenças em encontros" },
+      { k: "CadÚnico pendente", v: get("cadunico_pendentes", "cadunico.pendentes"), hint: "Pré-cadastro/agendamento/atrasos" },
+    ],
+    [data]
+  );
+
+  // ✅ Encaminhamentos SUAS (internos) com prazo vencido (localStorage)
+  const suasOverdue = useMemo(() => getSuasOverdueForModulo("CRAS"), [data, tarefasResumo, unidadeId, municipioId]);
+  const suasIn = useMemo(() => (suasOverdue || []).filter((x) => String(x?.destino_modulo || "").toUpperCase() === "CRAS"), [suasOverdue]);
+  const suasOut = useMemo(() => (suasOverdue || []).filter((x) => String(x?.origem_modulo || "").toUpperCase() === "CRAS"), [suasOverdue]);
+
+  function openSuas(view) {
+    try {
+      localStorage.setItem("suas_nav_modulo", "CRAS");
+      localStorage.setItem("suas_nav_view", view);
+      const first = view === "inbox" ? suasIn?.[0] : suasOut?.[0];
+      if (first?.id) localStorage.setItem("suas_nav_selected_id", String(first.id));
+    } catch {}
+    onNavigate?.({ tab: "encaminhamentos" });
+  }
+
+
+function formatErro(erro){
+  try{
+    if (erro == null) return "";
+    if (typeof erro === "string") return erro;
+    if (erro.detail) return typeof erro.detail === "string" ? erro.detail : JSON.stringify(erro.detail);
+    if (erro.message) return String(erro.message);
+    return JSON.stringify(erro);
+  }catch(e){
+    try{ return String(erro); }catch(_e){ return "Erro desconhecido"; }
+  }
+}
+
+return (
+
+    <div>
+      {erro ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14, marginBottom: 12 }}>
+          <strong>Dashboard indisponível:</strong> {formatErro(erro)}
+          <div className="texto-suave" style={{ marginTop: 6 }}>
+            Se aparecer “Token…”, faça login novamente.
+          </div>
+        </div>
+      ) : null}
+
+      {(suasOverdue || []).length ? (
+        <div
+          className="card"
+          style={{
+            padding: 12,
+            borderRadius: 16,
+            marginBottom: 12,
+            boxShadow: "none",
+            border: "1px solid rgba(239, 68, 68, .25)",
+            background: "rgba(239, 68, 68, 0.06)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 950 }}>⚠️ Atrasados (SUAS)</div>
+              <div className="texto-suave">Encaminhamentos internos com prazo vencido (CRAS/CREAS/PopRua).</div>
+              <div className="texto-suave" style={{ marginTop: 6 }}>
+                Recebidos: <b>{suasIn.length}</b> · Enviados: <b>{suasOut.length}</b>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {suasIn.length ? (
+                <button className="btn btn-primario" type="button" onClick={() => openSuas("inbox")}>Abrir Recebidos</button>
+              ) : null}
+              {suasOut.length ? (
+                <button className="btn btn-primario" type="button" onClick={() => openSuas("outbox")}>Abrir Enviados</button>
+              ) : null}
+              <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "encaminhamentos" })}>
+                Abrir Encaminhamentos
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="texto-suave">Painel operacional do CRAS</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="btn btn-secundario" type="button" onClick={load} disabled={loading}>
+            {loading ? "Atualizando..." : "Atualizar"}
+          </button>
+          <button className="btn btn-primario" type="button" onClick={() => onNavigate?.({ tab: "relatorios" })}>
+            Ir para Relatórios
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(4, minmax(220px, 1fr))", gap: 12 }}>
+        {cards.map((c) => (
+          <div key={c.k} className="card" style={{ padding: 12, borderRadius: 16 }}>
+            <div className="texto-suave" style={{ fontSize: 13 }}>
+              {c.k}
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 950, marginTop: 6 }}>{c.v}</div>
+            <div className="texto-suave" style={{ marginTop: 4 }}>
+              {c.hint}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card" style={{ padding: 12, borderRadius: 16, marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ fontWeight: 950 }}>Equipe e prazos (tarefas/SLA)</div>
+          <div className="texto-suave">
+            Abertas: <strong>{tarefasResumo?.total_abertas ?? "—"}</strong> · Vencidas: <strong>{tarefasResumo?.total_vencidas ?? "—"}</strong>
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto", marginTop: 10 }}>
+          <table className="table" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Técnico</th>
+                <th style={{ textAlign: "right" }}>Abertas</th>
+                <th style={{ textAlign: "right" }}>Vencidas</th>
+                <th style={{ textAlign: "right" }}>Concluídas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(tarefasResumo?.por_tecnico || []).map((x, idx) => (
+                <tr key={idx}>
+                  <td>
+                    <strong>{x.responsavel_nome || "—"}</strong>
+                  </td>
+                  <td style={{ textAlign: "right" }}>{x.abertas}</td>
+                  <td style={{ textAlign: "right" }}>{x.vencidas}</td>
+                  <td style={{ textAlign: "right" }}>{x.concluidas}</td>
+                </tr>
+              ))}
+              {!tarefasResumo?.por_tecnico || tarefasResumo.por_tecnico.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="texto-suave">
+                    Sem tarefas cadastradas ainda.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

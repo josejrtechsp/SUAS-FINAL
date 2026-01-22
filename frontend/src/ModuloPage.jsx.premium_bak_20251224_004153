@@ -1,0 +1,320 @@
+import React, { useMemo } from "react";
+import { useParams } from "react-router-dom";
+import "./Portal.css";
+
+const MODULOS = {
+  cras: {
+    titulo: "CRAS (PAIF / SCFV / encaminhamentos)",
+    resumo: "Padronize triagem, acompanhamento familiar e encaminhamentos com LGPD aplicada por perfil.",
+    resolve: [
+      "Evita 'cada um registra de um jeito' e reduz retrabalho.",
+      "Mantém histórico contínuo da família/usuário e do plano de acompanhamento.",
+      "Organiza encaminhamentos e devolutivas com responsabilidade por etapa.",
+      "Apoia indicadores e relatórios com rastreabilidade.",
+    ],
+    comoAjuda: [
+      "Triagem guiada e registro padronizado",
+      "Acompanhamento familiar (PAIF) e atividades (SCFV) com histórico",
+      "Encaminhamentos com status (enviado → recebido → devolutiva)",
+      "Checklist por etapa (modelo do Guia SUAS)",
+    ],
+    indicadores: [
+      "Atendimentos por unidade/equipe/período",
+      "Famílias acompanhadas, tempo de resposta, pendências",
+      "Encaminhamentos sem devolutiva e gargalos",
+    ],
+  },
+  creas: {
+    titulo: "CREAS (PAEFI / violações / medidas)",
+    resumo: "Casos complexos com etapas, prazos e contexto preservado — com sigilo e auditoria.",
+    resolve: [
+      "Evita perda de contexto em casos complexos (histórico por etapa).",
+      "Organiza prazos, pendências e responsabilidades.",
+      "Dá segurança institucional com LGPD, rastreabilidade e auditoria.",
+      "Gera evidência para relatórios e prestação de contas.",
+    ],
+    comoAjuda: [
+      "Fluxo por etapas com validação e motivo de travamento",
+      "Pendências e prazos (alertas) por caso",
+      "Registro estruturado + anexos/evidências",
+      "Relatórios e exportações com mascaramento (quando necessário)",
+    ],
+    indicadores: [
+      "Casos por etapa e tempo médio em cada etapa",
+      "Pendências em aberto e reincidência",
+      "Produtividade por equipe e gargalos",
+    ],
+  },
+  poprua: {
+    titulo: "Pop Rua (abordagem, busca ativa e rede)",
+    resumo: "Gestão de caso e operação de rua com rastreabilidade por etapa e controle de exposição (LGPD).",
+    resolve: [
+      "Registro rápido na rua + histórico completo do caso.",
+      "Linha do tempo por etapas com evidências e responsáveis.",
+      "Integração por fluxo (encaminhamento/devolutiva) com exposição mínima.",
+      "Gestão enxerga gargalos, recorrência e tempos de resposta.",
+    ],
+    comoAjuda: [
+      "Abordagem rápida e atendimento completo",
+      "Linha do Metrô (etapas clicáveis) com histórico imutável",
+      "Encaminhamentos intersetoriais com status e devolutiva",
+      "Painel operacional (fila, pendências, prazos) e painel gestor",
+    ],
+    indicadores: [
+      "Abordagens/atendimentos por período e território",
+      "Recorrência e tempo de resposta",
+      "Desfechos por etapa e status",
+    ],
+  },
+  acolhimentos: {
+    titulo: "Acolhimentos (unidades, vagas e movimentações)",
+    resumo: "Controle de vagas, entradas/saídas e acompanhamento — com relatórios claros para gestão e rede.",
+    resolve: [
+      "Organiza entradas/saídas, histórico e motivo de movimentações.",
+      "Evita duplicidade e perda de informação entre unidades.",
+      "Apoia gestão com relatórios por tipo de vaga, tempo de permanência e rotatividade.",
+    ],
+    comoAjuda: [
+      "Registro de acolhimento (entrada) e encerramento (saída) com motivo e destino",
+      "Vínculo com caso e histórico do usuário",
+      "Relatórios por unidade/tipo de vaga/período",
+      "Integração por fluxo com encaminhamentos e devolutivas",
+    ],
+    indicadores: [
+      "Taxa de ocupação (por unidade/tipo de vaga)",
+      "Tempo médio de permanência",
+      "Entradas/saídas por período e causas",
+    ],
+  },
+  gestao: {
+    titulo: "Gestão e Coordenação (painel do município)",
+    resumo: "Governança da rede: gargalos, produtividade, tempos por etapa e indicadores por unidade/território.",
+    resolve: [
+      "Gestor enxerga gargalos e filas em tempo real.",
+      "Padroniza evidências para auditoria e prestação de contas.",
+      "Compara unidades/equipes e evolução mensal.",
+    ],
+    comoAjuda: [
+      "Dashboard: volumetria, status e produtividade",
+      "Alertas de prazo/estagnação (casos sem atualização)",
+      "Relatórios gerenciais (anonimizados quando necessário)",
+      "Visão consórcio (comparativos intermunicipais — quando habilitado)",
+    ],
+    indicadores: [
+      "Casos por etapa/status (em andamento/encerrados/arquivados)",
+      "Tempo médio por etapa",
+      "Produtividade por equipe/unidade",
+    ],
+  },
+  vigilancia: {
+    titulo: "Vigilância Socioassistencial (território e evidências)",
+    resumo: "Indicadores e leitura territorial para priorizar ações e justificar alocação de recursos.",
+    resolve: [
+      "Mostra concentração de demanda e vazios assistenciais.",
+      "Ajuda priorização e planejamento com evidências.",
+      "Apoia prestação de contas com indicadores claros.",
+    ],
+    comoAjuda: [
+      "Indicadores por território/período/público",
+      "Séries históricas e comparativos",
+      "Exportações para relatórios e reuniões",
+      "Base para mapa/heatmap (opcional)",
+    ],
+    indicadores: [
+      "Incidência por território",
+      "Recorrência e tempo de resposta",
+      "Evolução mensal por serviço",
+    ],
+  },
+  terceiro_setor: {
+    titulo: "Terceiro Setor (parcerias e prestação de contas)",
+    resumo: "Organize execução, documentos e prestação de contas das OSCs com transparência e rastreabilidade.",
+    resolve: [
+      "Centraliza documentos e evidências por parceria.",
+      "Facilita análise e acompanhamento pela gestão.",
+      "Apoia transparência e controle social sem expor dados pessoais.",
+    ],
+    comoAjuda: [
+      "Cadastro de parcerias/OSCs e rotinas",
+      "Upload de documentos e trilha de evidências",
+      "Relatórios por parceria/período",
+      "Acesso por perfil (LGPD) e auditoria",
+    ],
+    indicadores: [
+      "Execução por parceria e período",
+      "Pendências documentais",
+      "Entregas/atividades registradas",
+    ],
+  },
+  conselho: {
+    titulo: "Conselho (CMAS e controle social)",
+    resumo: "Acesso orientado à informação certa: relatórios, metas e evidências com trilha de auditoria.",
+    resolve: [
+      "Facilita deliberação com informação objetiva e rastreável.",
+      "Apoia fiscalização sem expor dados sensíveis.",
+      "Organiza relatórios e evidências por período.",
+    ],
+    comoAjuda: [
+      "Relatórios e exportações com mascaramento/anonimização quando necessário",
+      "Indicadores de execução e monitoramento",
+      "Trilha de auditoria (quem gerou/visualizou/exportou)",
+      "Biblioteca do Guia SUAS para padronização",
+    ],
+    indicadores: [
+      "Relatórios por período e serviço",
+      "Evidências anexas e trilhas",
+      "Séries de acompanhamento (metas/execução)",
+    ],
+  },
+};
+
+export default function ModuloPage({ onEntrar }) {
+  const { id } = useParams();
+  const mod = MODULOS[(id || "").toLowerCase()];
+
+  if (!mod) {
+    return (
+      <div className="portal3-root">
+        <header className="portal3-topbar">
+          <div className="portal3-topbar-inner">
+            <div className="portal3-brand">
+              <div className="portal3-brand-tag">MÓDULO · Inteligencia Social</div>
+              <div className="portal3-brand-title">
+                Portal <span className="portal3-brand-highlight">SUAS</span>
+              </div>
+              <div className="portal3-brand-sub">Módulo não encontrado.</div>
+            </div>
+            <div className="portal3-actions">
+              <button type="button" className="portal3-btn-secondary" onClick={() => (window.location.href = "/")}>
+                ← Portal
+              </button>
+              <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+                Acessar o painel
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main className="portal3-main">
+          <section className="portal3-section">
+            <div className="portal3-empty">Módulo inválido: “{id}”.</div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brand">
+            <div className="portal3-brand-tag">MÓDULO · Inteligencia Social</div>
+            <div className="portal3-brand-title">
+              {mod.titulo.split(" ")[0]} <span className="portal3-brand-highlight">SUAS</span>
+            </div>
+            <div className="portal3-brand-sub">{mod.resumo}</div>
+          </div>
+
+          <div className="portal3-actions">
+            <button type="button" className="portal3-btn-secondary" onClick={() => (window.location.href = "/#modulos")}>
+              ← Portal
+            </button>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Acessar o painel
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="portal3-hero">
+        <div className="portal3-hero-inner">
+          <div>
+            <div className="portal3-kicker">Módulo do Sistema SUAS</div>
+            <h1 className="portal3-title">
+              {mod.titulo}
+            </h1>
+            <p className="portal3-lead">{mod.resumo}</p>
+
+            <div className="portal3-cta-row">
+              <button type="button" className="portal3-btn-primary portal3-btn-big" onClick={() => onEntrar?.()}>
+                Ver no painel (login)
+              </button>
+              <a className="portal3-link" href="#como">Como o sistema ajuda ↓</a>
+              <a className="portal3-link" href="#indicadores">Indicadores ↓</a>
+            </div>
+
+            <div className="portal3-chips">
+              <span className="portal3-chip">LGPD por perfil</span>
+              <span className="portal3-chip">Rastreabilidade</span>
+              <span className="portal3-chip">Fluxo por etapas</span>
+              <span className="portal3-chip">Evidências e relatórios</span>
+            </div>
+          </div>
+
+          <div className="portal3-feature">
+            <div className="portal3-feature-title">O que esse módulo resolve?</div>
+            <ul className="portal3-bullets">
+              {mod.resolve.map((t, i) => <li key={i}>{t}</li>)}
+            </ul>
+            <button type="button" className="portal3-btn-secondary" onClick={() => (window.location.href = "/#guia")}>
+              Abrir Guia SUAS (no portal)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="portal3-main">
+        <section className="portal3-section" id="como">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Como o sistema pode ajudar</h2>
+            <p className="portal3-sub">Funcionalidades práticas que reduzem retrabalho e aumentam padrão na rede.</p>
+          </div>
+
+          <div className="portal3-cards-3">
+            {mod.comoAjuda.map((t, i) => (
+              <div key={i} className="portal3-card">
+                <div className="portal3-card-icon">✅</div>
+                <div className="portal3-card-title">{t}</div>
+                <div className="portal3-card-text">Implementação orientada por rotinas do serviço e boas práticas do Guia SUAS.</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="portal3-section" id="indicadores">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Indicadores e evidências</h2>
+            <p className="portal3-sub">O gestor enxerga gargalos, filas e resultados — com rastreabilidade.</p>
+          </div>
+
+          <div className="portal3-cards-3">
+            {mod.indicadores.map((t, i) => (
+              <div key={i} className="portal3-card">
+                <div className="portal3-card-icon">📊</div>
+                <div className="portal3-card-title">{t}</div>
+                <div className="portal3-card-text">Relatórios e exportações com controle de exposição (LGPD) quando necessário.</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">
+              Quer ver isso funcionando no seu município? Comece por este módulo e evolua para o SUAS completo.
+            </div>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Acessar o painel
+            </button>
+          </div>
+        </section>
+
+        <footer className="portal3-footer">
+          <div className="portal3-footer-inner">
+            <span><strong>Portal SUAS</strong> • Inteligencia Social</span>
+            <span className="portal3-footer-muted">Página do módulo: /modulos/{id}</span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}

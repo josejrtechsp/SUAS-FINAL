@@ -1,0 +1,263 @@
+/* Guia SUAS — Tema CLEAN (alinhado ao Dashboard Pop Rua) */
+:root{
+  --g-border: rgba(16,24,40,.10);
+  --g-border2: rgba(16,24,40,.08);
+  --g-muted: #667085;
+  --g-bg: #ffffff;
+  --g-soft: rgba(249,250,251,.72);
+  --g-shadow: 0 10px 26px rgba(16,24,40,.06);
+  --g-shadow2: 0 12px 32px rgba(16,24,40,.08);
+  --g-radius: 18px;
+}
+
+.guia-suas{
+  padding: 18px;
+  max-width: 1220px;
+  margin: 0 auto;
+}
+
+.guia-topbar{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  margin-bottom: 14px;
+}
+.guia-title{
+  font-size: 30px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+.guia-subtitle{
+  margin-top: 6px;
+  color: var(--g-muted);
+  max-width: 920px;
+  line-height: 1.35;
+}
+
+.guia-layout{
+  display:grid;
+  grid-template-columns: 290px 1fr;
+  gap: 16px;
+  align-items:start;
+}
+
+/* Sidebar */
+.guia-sidebar{ position: sticky; top: 10px; }
+.guia-sidebar-inner{
+  border: 1px solid var(--g-border2);
+  border-radius: var(--g-radius);
+  background: var(--g-bg);
+  box-shadow: var(--g-shadow);
+  padding: 12px;
+}
+
+.guia-search-wrap{ display:flex; gap:10px; align-items:center; margin-bottom: 12px; }
+.guia-search{ flex:1; border-radius: 14px !important; }
+.guia-search-wrap .btn{ border-radius: 14px; }
+
+.guia-search-panel{
+  border: 1px solid var(--g-border2);
+  border-radius: 16px;
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.guia-search-title{ font-weight: 900; margin-bottom: 8px; }
+.guia-search-item{
+  width:100%;
+  border: 1px solid var(--g-border2);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  text-align:left;
+  cursor:pointer;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.guia-search-item:hover{ background:#f6f7fb; }
+.guia-search-item-title{ font-weight: 900; }
+.guia-search-more{
+  margin-top: 8px;
+  width:100%;
+  border: 1px dashed rgba(16,24,40,.14);
+  border-radius: 14px;
+  padding: 9px 12px;
+  background: #fff;
+  cursor:pointer;
+}
+
+.guia-cat-list{ display:flex; flex-direction:column; gap:10px; }
+.guia-cat{
+  border: 1px solid var(--g-border2);
+  border-radius: var(--g-radius);
+  padding: 10px 12px;
+  background: #fff;
+  cursor:pointer;
+  display:flex;
+  align-items:flex-start;
+  gap: 10px;
+  text-align:left;
+}
+.guia-cat:hover{ background:#f6f7fb; }
+.guia-cat.active{
+  border-color: rgba(124,58,237,.35);
+  box-shadow: 0 10px 22px rgba(124,58,237,.10);
+}
+.guia-cat-icon{
+  /* pedido: aumentar SOMENTE o ícone (não o bloco) */
+  width: 58px; height: 58px;
+  border-radius: 16px;
+  display:flex; align-items:center; justify-content:center;
+  background: transparent;
+  flex: 0 0 auto;
+  font-size: 28px;
+}
+.guia-cat-title{ font-weight: 950; }
+.guia-cat-desc{ margin-top: 2px; color: var(--g-muted); font-size: 12px; line-height: 1.25; }
+
+/* Conteúdo */
+.guia-main{ min-width: 0; }
+
+.guia-breadcrumb{
+  display:flex; gap:8px; align-items:center;
+  margin: 4px 0 12px;
+  color: var(--g-muted);
+}
+.guia-breadcrumb .link{ cursor:pointer; color: #4c1d95; font-weight: 900; }
+
+/* Em vez de 2 colunas (polui), fica 1 coluna de blocos */
+.guia-blocks{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+
+.guia-block{
+  border: 1px solid var(--g-border2);
+  border-radius: 20px;
+  background:#fff;
+  padding: 14px 14px 10px;
+  box-shadow: var(--g-shadow);
+}
+.guia-block-title{ font-weight: 950; font-size: 16px; }
+.guia-block-desc{ margin-top: 4px; color: var(--g-muted); font-size: 13px; }
+
+.guia-block-list{ margin-top: 12px; display:flex; flex-direction:column; gap:10px; }
+
+.guia-topic{
+  width:100%;
+  border: 1px solid var(--g-border2);
+  border-radius: 16px;
+  padding: 12px 12px;
+  background: #fff;
+  cursor:pointer;
+  display:flex;
+  justify-content:space-between;
+  gap: 10px;
+  text-align:left;
+}
+.guia-topic:hover{ background:#f6f7fb; }
+.guia-topic-title{ font-weight: 900; }
+.guia-topic-cta{
+  color: #4c1d95;
+  font-weight: 950;
+  background: rgba(124,58,237,.08);
+  border: 1px solid rgba(124,58,237,.18);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+
+/* Tema */
+.guia-theme{
+  border: 1px solid var(--g-border2);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: var(--g-shadow2);
+  overflow:hidden;
+}
+.guia-theme-head{
+  display:flex; justify-content:space-between; align-items:flex-start; gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--g-border2);
+  background: var(--g-soft);
+}
+.guia-theme-title{ font-size: 18px; font-weight: 950; }
+.guia-theme-meta{ margin-top: 6px; display:flex; gap: 8px; flex-wrap: wrap; }
+.chip{
+  border: 1px solid rgba(16,24,40,.12);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  background:#fff;
+}
+.guia-theme-actions{ display:flex; gap: 10px; flex-wrap: wrap; }
+.guia-theme-body{ padding: 14px 16px; }
+
+.guia-chips{ display:flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip-ativo{
+  border-color: rgba(124,58,237,.35);
+  background: rgba(124,58,237,.08);
+}
+
+.guia-theme-text{ line-height: 1.55; color: #111827; white-space: pre-wrap; }
+.guia-list{ margin: 0; padding-left: 20px; line-height: 1.6; }
+
+.muted{ color: var(--g-muted); }
+
+/* Start */
+.guia-start-grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.guia-start-card{
+  border: 1px solid var(--g-border2);
+  border-radius: 20px;
+  background:#fff;
+  padding: 14px;
+  box-shadow: var(--g-shadow);
+}
+.guia-start-title{ font-weight: 950; }
+.guia-start-text{ margin-top: 6px; color: #111827; line-height: 1.5; }
+
+/* Responsivo */
+@media (max-width: 1100px){
+  .guia-layout{ grid-template-columns: 1fr; }
+  .guia-sidebar{ position: static; }
+  .guia-start-grid{ grid-template-columns: 1fr; }
+}
+
+
+
+/* === FIX: blocos sem buraco (altura automática) === */
+.guia-block{
+  height: auto !important;
+  min-height: 0 !important;
+}
+.guia-block-list{
+  margin-top: 12px;
+}
+
+
+/* === POPRUA: masonry blocks (anti-buraco) === */
+/* Masonry: duas colunas independentes no conteúdo da direita */
+.guia-blocks{
+  display: block !important;
+  column-count: 2;
+  column-gap: 14px;
+}
+
+/* Cada bloco vira "item" do masonry */
+.guia-block{
+  display: inline-block !important;
+  width: 100%;
+  break-inside: avoid;
+  margin: 0 0 14px 0;
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+/* Responsivo: 1 coluna */
+@media (max-width: 1100px){
+  .guia-blocks{
+    column-count: 1;
+  }
+}

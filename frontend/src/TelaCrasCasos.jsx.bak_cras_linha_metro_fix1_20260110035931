@@ -1,0 +1,738 @@
+import { useEffect, useMemo, useState } from "react";
+import LinhaMetro from "./components/LinhaMetro.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import CrasPiaCard from "./components/CrasPiaCard.jsx";
+import { rmaCollect } from "./domain/rmaCollector.js";
+
+function safeStr(v) {
+  return (v == null ? "" : String(v)).trim();
+}
+
+function badgeStyle(cor) {
+  const base = {
+    padding: "6px 12px",
+    borderRadius: 999,
+    fontWeight: 900,
+    fontSize: 12,
+    display: "inline-flex",
+    gap: 8,
+    alignItems: "center",
+    border: "1px solid rgba(2,6,23,.08)",
+    background: "rgba(148,163,184,.10)",
+    color: "rgba(2,6,23,.85)",
+    whiteSpace: "nowrap",
+  };
+  if (cor === "vermelho") return { ...base, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.25)" };
+  if (cor === "laranja") return { ...base, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.25)" };
+  if (cor === "verde") return { ...base, background: "rgba(34,197,94,.12)", border: "1px solid rgba(34,197,94,.25)" };
+  return base;
+}
+
+export default function TelaCrasCasos({ apiBase, apiFetch, usuarioLogado, view = 'lista', onSetView, onNavigate}) {
+  const unidadeAtiva = localStorage.getItem("cras_unidade_ativa") || "";
+
+  const [erro, setErro] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [etapas, setEtapas] = useState([]);
+  const [casos, setCasos] = useState([]);
+
+  const [fStatus, setFStatus] = useState("");
+  const [fEtapa, setFEtapa] = useState("");
+  const [q, setQ] = useState("");
+
+  const [sel, setSel] = useState(null);
+  const [historico, setHistorico] = useState([]);
+  const [linhaMetro, setLinhaMetro] = useState(null);
+  const [cadPc, setCadPc] = useState(null);
+  const [cadPcLoading, setCadPcLoading] = useState(false);
+  const [cadAgendarId, setCadAgendarId] = useState(null);
+  const [cadAgendarDT, setCadAgendarDT] = useState("");
+
+  // criar caso
+  const [tipoCaso, setTipoCaso] = useState("familia");
+  const [pessoas, setPessoas] = useState([]);
+  const [familias, setFamilias] = useState([]);
+  const [pessoaId, setPessoaId] = useState("");
+  const [familiaId, setFamiliaId] = useState("");
+  const [obsIni, setObsIni] = useState("");
+
+  // ações
+  const [etapaDestino, setEtapaDestino] = useState("");
+  const [obsAcao, setObsAcao] = useState("");
+  const [motivoEstag, setMotivoEstag] = useState("");
+
+  const casosOrdenados = useMemo(() => {
+    const arr = Array.isArray(casos) ? [...casos] : [];
+    arr.sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
+    return arr;
+  }, [casos]);
+
+
+    // ✅ Integração SUAS (BACKEND): devolutivas/cobranças aparecem no caso (histórico + metrô)
+  const [suasUI, setSuasUI] = useState({
+  
+  });
+
+async function loadEtapas() {
+    try {
+      const r = await apiFetch(`${apiBase}/cras/linha-metro/etapas`);
+      if (r.ok) setEtapas(await r.json());
+    } catch {}
+  }
+
+  async function loadCadastros() {
+    try {
+      const [rp, rf] = await Promise.all([
+        apiFetch(`${apiBase}/cras/cadastros/pessoas`),
+        apiFetch(`${apiBase}/cras/cadastros/familias`),
+      ]);
+      if (rp.ok) setPessoas(await rp.json());
+      if (rf.ok) setFamilias(await rf.json());
+    } catch {}
+  }
+
+  async function loadCasos() {
+    setErro("");
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (fStatus) params.set("status", fStatus);
+      if (fEtapa) params.set("etapa", fEtapa);
+      if (unidadeAtiva) params.set("unidade_id", unidadeAtiva);
+      if (q) params.set("q", q);
+
+      const r = await apiFetch(`${apiBase}/cras/casos?${params.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      setCasos(Array.isArray(data) ? data : []);
+
+      // ✅ Autoabrir caso quando vier de Encaminhamentos SUAS (1 clique)
+      try {
+        const rawSel = localStorage.getItem("cras_selected_case") || "";
+        const selId = Number(rawSel);
+        if (selId && !Number.isNaN(selId)) {
+          const found = (Array.isArray(data) ? data : []).find((c) => Number(c?.id) === selId) || null;
+          if (found) {
+            setSel(found);
+            localStorage.removeItem("cras_selected_case");
+          }
+        }
+      } catch {}
+
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível carregar os casos.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadHistorico(casoId) {
+    if (!casoId) return setHistorico([]);
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${casoId}/historico`);
+      if (r.ok) setHistorico(await r.json());
+      else setHistorico([]);
+    } catch {
+      setHistorico([]);
+    }
+  }
+
+  
+  async function loadCadPc(casoId) {
+    if (!casoId) return setCadPc(null);
+    setCadPcLoading(true);
+    try {
+      const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros?caso_id=${Number(casoId)}`);
+      if (!r.ok) { setCadPc(null); return; }
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : [];
+      setCadPc(arr.length ? arr[0] : null);
+    } catch {
+      setCadPc(null);
+    } finally {
+      setCadPcLoading(false);
+    }
+  }
+
+  async function criarCadPc() {
+    if (!sel?.id) return;
+    const unidade = localStorage.getItem("cras_unidade_ativa") || "";
+    const payload = {
+      unidade_id: unidade ? Number(unidade) : (sel.unidade_id || 1),
+      caso_id: Number(sel.id),
+      // tenta vincular pessoa/familia se existirem
+      pessoa_id: sel.pessoa_id ? Number(sel.pessoa_id) : null,
+      familia_id: sel.familia_id ? Number(sel.familia_id) : null,
+      observacoes: "Pré-cadastro criado a partir do caso CRAS",
+    };
+    const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) await loadCadPc(sel.id);
+  }
+
+  async function agendarCadPc() {
+    if (!cadAgendarId || !cadAgendarDT) return;
+    const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros/${cadAgendarId}/agendar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data_agendada: cadAgendarDT }),
+    });
+    if (r.ok) {
+      setCadAgendarId(null);
+      setCadAgendarDT("");
+      await loadCadPc(sel?.id);
+    }
+  }
+
+  async function finalizarCadPc(pcId) {
+    const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros/${pcId}/finalizar`, { method: "POST" });
+    if (r.ok) await loadCadPc(sel?.id);
+  }
+
+  async function naoCompareceuCadPc(pcId) {
+    const r = await apiFetch(`${apiBase}/cras/cadunico/precadastros/${pcId}/nao-compareceu`, { method: "POST" });
+    if (r.ok) await loadCadPc(sel?.id);
+  }
+
+async function carregarLinhaMetro(casoId) {
+    if (!casoId) return setLinhaMetro(null);
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${Number(casoId)}/linha-metro`);
+      if (!r.ok) return setLinhaMetro(null);
+      setLinhaMetro(await r.json());
+    } catch {
+      setLinhaMetro(null);
+    }
+  }
+
+  useEffect(() => {
+    loadEtapas();
+    loadCadastros();
+    loadCasos();
+    // eslint-disable-next-line
+  }, []);
+
+  useEffect(() => {
+    if (sel?.id) {
+      loadHistorico(sel.id);
+      carregarLinhaMetro(sel.id);
+      loadCadPc(sel.id);
+    }
+    // eslint-disable-next-line
+  }, [sel?.id]);
+
+  async function criarCaso() {
+    setMsg("");
+    if (!unidadeAtiva) return setMsg("Selecione uma unidade CRAS no cabeçalho (unidade ativa).");
+    if (tipoCaso === "familia" && !familiaId) return setMsg("Selecione uma família.");
+    if (tipoCaso === "individuo" && !pessoaId) return setMsg("Selecione uma pessoa.");
+
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          unidade_id: Number(unidadeAtiva),
+          tipo_caso: tipoCaso,
+          pessoa_id: tipoCaso === "individuo" ? Number(pessoaId) : null,
+          familia_id: tipoCaso === "familia" ? Number(familiaId) : null,
+          observacoes_iniciais: safeStr(obsIni) || null,
+          prioridade: "media",
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const created = await r.json();
+      setMsg("Caso criado ✅");
+      setObsIni("");
+      setPessoaId("");
+      setFamiliaId("");
+      await loadCasos();
+      setSel(created);
+      // RMA_COLLECT_V1 CASOS
+      try {
+        await rmaCollect({
+          apiBase,
+          apiFetch,
+          servico: "CASOS",
+          acao: "criar",
+          unidade_id: (typeof unidadeAtiva !== "undefined" && unidadeAtiva) ? Number(unidadeAtiva) : null,
+          pessoa_id: created?.pessoa_id ?? null,
+          familia_id: created?.familia_id ?? null,
+          caso_id: created?.id ?? null,
+          alvo_tipo: "caso",
+          alvo_id: created?.id ?? null,
+          meta: { tipo_caso: (typeof tipoCaso !== "undefined" ? tipoCaso : null) },
+        });
+      } catch {}
+      try {
+        if (created?.pessoa_id) localStorage.setItem("cras_ficha_pessoa_id", String(created.pessoa_id));
+        if (created?.familia_id) localStorage.setItem("cras_ficha_familia_id", String(created.familia_id));
+      } catch {}
+      try { onSetView && onSetView("lista"); } catch {}
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao criar caso.");
+    }
+  }
+
+  async function avancar() {
+    setMsg("");
+    if (!sel?.id) return setMsg("Selecione um caso.");
+    if (!etapaDestino) return setMsg("Selecione a etapa destino.");
+
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${sel.id}/avancar-etapa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ etapa_destino: etapaDestino, observacoes: safeStr(obsAcao) || null }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const updated = await r.json();
+      setSel(updated);
+      setEtapaDestino("");
+      setObsAcao("");
+      await loadCasos();
+      await loadHistorico(updated.id);
+      await carregarLinhaMetro(updated.id);
+      setMsg("Etapa avançada ✅");
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao avançar etapa.");
+    }
+  }
+
+  async function validar() {
+    setMsg("");
+    if (!sel?.id) return setMsg("Selecione um caso.");
+
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${sel.id}/validar-recebimento`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observacoes: safeStr(obsAcao) || null }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const updated = await r.json();
+      setSel(updated);
+      setObsAcao("");
+      await loadCasos();
+      await loadHistorico(updated.id);
+      await carregarLinhaMetro(updated.id);
+      setMsg("Recebimento validado ✅");
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao validar recebimento.");
+    }
+  }
+
+  async function estagnar() {
+    setMsg("");
+    if (!sel?.id) return setMsg("Selecione um caso.");
+    if (!safeStr(motivoEstag)) return setMsg("Motivo de estagnação é obrigatório.");
+
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${sel.id}/estagnar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo_estagnacao: safeStr(motivoEstag), observacoes: safeStr(obsAcao) || null }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const updated = await r.json();
+      setSel(updated);
+      setMotivoEstag("");
+      setObsAcao("");
+      await loadCasos();
+      await loadHistorico(updated.id);
+      await carregarLinhaMetro(updated.id);
+      setMsg("Estagnação registrada ✅");
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao registrar estagnação.");
+    }
+  }
+
+  async function encerrar() {
+    setMsg("");
+    if (!sel?.id) return setMsg("Selecione um caso.");
+
+    try {
+      const r = await apiFetch(`${apiBase}/cras/casos/${sel.id}/encerrar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observacoes: safeStr(obsAcao) || null }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const updated = await r.json();
+      setSel(updated);
+      setObsAcao("");
+      await loadCasos();
+      await loadHistorico(updated.id);
+      await carregarLinhaMetro(updated.id);
+      setMsg("Caso encerrado ✅");
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao encerrar caso.");
+    }
+  }
+
+ // deps leves
+
+ // deps leves
+  // ✅ UI derivada (segura): histórico + SUAS
+  const historicoUI = useMemo(() => {
+    const base = Array.isArray(historico) ? historico : [];
+    const extra = Array.isArray(suasUI?.timeline) ? suasUI.timeline : [];
+    const all = [...extra, ...base];
+    all.sort((a, b) => {
+      const ta = a?.criado_em ? new Date(a.criado_em).getTime() : (a?.quando ? new Date(a.quando).getTime() : 0);
+      const tb = b?.criado_em ? new Date(b.criado_em).getTime() : (b?.quando ? new Date(b.quando).getTime() : 0);
+      return tb - ta;
+    });
+    return all;
+  }, [historico, suasUI]);
+
+  // ✅ UI derivada (segura): Linha do Metrô como OBJETO e mescla registros SUAS na etapa atual
+  const linhaMetroUI = useMemo(() => {
+    if (!linhaMetro) return null;
+
+    const extraRegs = Array.isArray(suasUI?.metroRegistros) ? suasUI.metroRegistros : [];
+    if (!extraRegs.length) return linhaMetro;
+
+    const etapasArr = Array.isArray(linhaMetro?.etapas) ? linhaMetro.etapas : [];
+    if (!etapasArr.length) return linhaMetro;
+
+    const prefer = String(sel?.etapa_atual || "");
+    let idx = etapasArr.findIndex((e) => String(e?.codigo || "") === prefer);
+    if (idx < 0) idx = 0;
+
+    const sorted = [...extraRegs].sort((a, b) => {
+      const ta = a?.data_hora ? new Date(a.data_hora).getTime() : 0;
+      const tb = b?.data_hora ? new Date(b.data_hora).getTime() : 0;
+      return tb - ta;
+    });
+
+    const merged = { ...linhaMetro };
+    merged.etapas = etapasArr.map((e, i) => {
+      if (i !== idx) return e;
+      const regs = Array.isArray(e?.registros) ? e.registros : [];
+      return { ...e, registros: [...sorted, ...regs] };
+    });
+    return merged;
+  }, [linhaMetro, sel?.etapa_atual, suasUI?.stats?.total]);
+  // Abrir Ficha 360 diretamente a partir do caso
+  function openPessoa360() {
+    const pid = sel?.pessoa_id != null ? Number(sel.pessoa_id) : null;
+    if (!pid) return;
+    try { localStorage.setItem("cras_ficha_pessoa_id", String(pid)); } catch {}
+    try { localStorage.setItem("cras_active_tab", "ficha"); } catch {}
+    if (typeof onNavigate === "function") onNavigate("ficha");
+  }
+
+  function openFamilia360() {
+    const fid = sel?.familia_id != null ? Number(sel.familia_id) : null;
+    if (!fid) return;
+    try { localStorage.setItem("cras_ficha_familia_id", String(fid)); } catch {}
+    try { localStorage.setItem("cras_active_tab", "ficha"); } catch {}
+    if (typeof onNavigate === "function") onNavigate("ficha");
+  }
+
+
+
+
+
+
+
+
+  return (
+    <div className="layout-1col">
+
+      {erro ? <div className="card" style={{ padding: 12, borderRadius: 14 }}><strong>{erro}</strong></div> : null}
+      {msg ? <div className="card" style={{ padding: 12, borderRadius: 14 }}><strong>{msg}</strong></div> : null}
+
+      
+      {/* Conteúdo por subtela (1 por vez) */}
+      {view === "criar" ? (
+        <div className="card" style={{ padding: 12, borderRadius: 18, maxWidth: 860 }}>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>Criar caso</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <select className="input" value={tipoCaso} onChange={(e) => setTipoCaso(e.target.value)}>
+              <option value="familia">Família</option>
+              <option value="individuo">Indivíduo</option>
+            </select>
+            <div className="texto-suave" style={{ alignSelf: "center" }}>
+              Unidade ativa: <strong>{unidadeAtiva || "—"}</strong>
+            </div>
+          </div>
+
+          {tipoCaso === "individuo" ? (
+            <select className="input" value={pessoaId} onChange={(e) => setPessoaId(e.target.value)} style={{ marginTop: 10 }}>
+              <option value="">Selecione a pessoa…</option>
+              {pessoas.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(p.nome_social ? `${p.nome_social} (${p.nome})` : p.nome)} — CPF: {p.cpf || "—"}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select className="input" value={familiaId} onChange={(e) => setFamiliaId(e.target.value)} style={{ marginTop: 10 }}>
+              <option value="">Selecione a família…</option>
+              {familias.map((f) => (
+                <option key={f.id} value={f.id}>
+                  Família #{f.id} — NIS: {f.nis_familia || "—"} — {f.bairro || "bairro —"}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Observações iniciais (opcional)"
+            value={obsIni}
+            onChange={(e) => setObsIni(e.target.value)}
+            style={{ marginTop: 10 }}
+          />
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+            <button className="btn btn-primario" type="button" onClick={criarCaso}>Criar</button>
+            <button className="btn btn-secundario" type="button" onClick={loadCasos}>Atualizar lista</button>
+          </div>
+        </div>
+      ) : view === "filtros" ? (
+        <div className="card" style={{ padding: 12, borderRadius: 18, maxWidth: 980 }}>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>Filtros</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 10 }}>
+            <select className="input" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+              <option value="">Status (todos)</option>
+              <option value="em_andamento">Em andamento</option>
+              <option value="encerrado">Encerrado</option>
+            </select>
+
+            <select className="input" value={fEtapa} onChange={(e) => setFEtapa(e.target.value)}>
+              <option value="">Etapa (todas)</option>
+              {etapas.map((e) => (
+                <option key={e.codigo} value={e.codigo}>{e.codigo} — {e.nome}</option>
+              ))}
+            </select>
+
+            <input className="input" placeholder="Buscar (nome/cpf/nis/bairro/território)" value={q} onChange={(e) => setQ(e.target.value)} />
+            <button className="btn btn-primario" type="button" onClick={async () => { await loadCasos(); try { onSetView && onSetView("lista"); } catch {} }}>Aplicar</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {/* LISTA (esquerda) */}
+          <div className="card" style={{ padding: 12, borderRadius: 18, minHeight: 360 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <h3 style={{ margin: 0 }}>Lista de casos</h3>
+              <button className="btn btn-secundario" type="button" onClick={loadCasos}>Atualizar</button>
+            </div>
+
+            {loading ? <div className="texto-suave" style={{ marginTop: 10 }}>Carregando…</div> : null}
+
+            <div style={{ display: "grid", gap: 8, marginTop: 10, maxHeight: 640, overflow: "auto" }}>
+              {casosOrdenados.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="card"
+                  onClick={() => {
+                    setSel(c);
+                    try {
+                      if (c?.pessoa_id) {
+                        localStorage.setItem("cras_ficha_pessoa_id", String(c.pessoa_id));
+                      } else if (c?.familia_id && Array.isArray(familias)) {
+                        const fam = familias.find((f) => Number(f.id) === Number(c.familia_id));
+                        if (fam?.referencia_pessoa_id) localStorage.setItem("cras_ficha_pessoa_id", String(fam.referencia_pessoa_id));
+                      }
+                    } catch {}
+                  }}
+                  style={{
+                    textAlign: "left",
+                    padding: 12,
+                    borderRadius: 16,
+                    cursor: "pointer",
+                    border: sel?.id === c.id ? "2px solid rgba(99,102,241,.55)" : "1px solid rgba(2,6,23,.08)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontWeight: 900 }}>
+                      #{c.id} · {c.display?.nome || (c.tipo_caso === "familia" ? "Família" : "Pessoa")}
+                    </div>
+                    <span style={badgeStyle(c.cor)}>{(c.cor || "—").toUpperCase()} · {c.etapa_atual}</span>
+                  </div>
+                  <div className="texto-suave" style={{ marginTop: 6 }}>
+                    Bairro: <strong>{c.display?.bairro || "—"}</strong> · Território: <strong>{c.display?.territorio || "—"}</strong>
+                  </div>
+                  <div className="texto-suave">
+                    Dias na etapa: <strong>{c.dias_na_etapa}</strong> / SLA: <strong>{c.sla_dias}</strong>
+                    {c.validacao_pendente ? " · Validação pendente" : ""}
+                    {c.estagnado ? " · Estagnado" : ""}
+                  </div>
+                </button>
+              ))}
+              {!casosOrdenados.length ? <div className="texto-suave">Nenhum caso encontrado.</div> : null}
+            </div>
+          </div>
+
+          {/* DETALHE (direita) */}
+          <div className="card" style={{ padding: 12, borderRadius: 18, minHeight: 360 }}>
+            <h3 style={{ margin: 0 }}>Detalhe do caso</h3>
+
+            {!sel ? (
+              <div className="texto-suave" style={{ marginTop: 10 }}>Selecione um caso na lista.</div>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 900 }}>#{sel.id} · {sel.display?.nome || "—"}</div>
+                    <div className="texto-suave">Status: <strong>{sel.status}</strong> · Tipo: <strong>{sel.tipo_caso}</strong></div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button className="btn btn-secundario" type="button" disabled={!sel?.pessoa_id} onClick={openPessoa360}>
+                      Pessoa 360
+                    </button>
+                    <button className="btn btn-secundario" type="button" disabled={!sel?.familia_id} onClick={openFamilia360}>
+                      Família 360
+                    </button>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                    {suasUI?.stats?.vencidos ? (
+                      <span style={badgeStyle("vermelho")}>SUAS sem devolutiva: {suasUI.stats.vencidos}</span>
+                    ) : null}
+                    {suasUI?.stats?.abertos ? (
+                      <span style={badgeStyle("laranja")}>SUAS abertos: {suasUI.stats.abertos}</span>
+                    ) : null}
+                  </div>
+                  </div>
+                  <span style={badgeStyle(sel.cor)}>{(sel.cor || "—").toUpperCase()} · {sel.etapa_atual}</span>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 18, marginTop: 12 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 10 }}>Linha de metrô</div>
+                  <ErrorBoundary label="Linha do metrô">
+                    {linhaMetro ? (
+                      <LinhaMetro
+                        linhaMetro={_normalizeLinhaMetro(linhaMetroUI)}
+                        casoId={sel?.id}
+                        apiBase={apiBase}
+                        apiFetch={apiFetch}
+                        atendimentos={[]}
+                        municipios={[]}
+                        onRefresh={() => carregarLinhaMetro(sel?.id)}
+                      />
+                    ) : (
+                      <p className="texto-suave">Carregando linha de metrô…</p>
+                    )}
+                  </ErrorBoundary>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 18, marginTop: 12 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 10 }}>CadÚnico</div>
+
+                  {cadPcLoading ? (
+                    <div className="texto-suave">Carregando…</div>
+                  ) : cadPc ? (
+                    <>
+                      <div className="texto-suave">
+                        Status: <strong>{cadPc.status}</strong> · Agendado: <strong>{cadPc.data_agendada ? new Date(cadPc.data_agendada).toLocaleString() : "—"}</strong>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                        <button className="btn btn-secundario" type="button" onClick={() => { setCadAgendarId(cadPc.id); setCadAgendarDT(""); }}>
+                          Agendar/Reagendar
+                        </button>
+                        <button className="btn btn-secundario" type="button" onClick={() => finalizarCadPc(cadPc.id)}>
+                          Finalizar
+                        </button>
+                        <button className="btn btn-secundario" type="button" onClick={() => naoCompareceuCadPc(cadPc.id)}>
+                          Não compareceu
+                        </button>
+                      </div>
+
+                      {cadAgendarId === cadPc.id ? (
+                        <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 10, border: "1px solid rgba(2,6,23,.06)" }}>
+                          <div style={{ fontWeight: 900, marginBottom: 8 }}>Agendar atendimento</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10 }}>
+                            <input type="datetime-local" className="input" value={cadAgendarDT} onChange={(e) => setCadAgendarDT(e.target.value)} />
+                            <button className="btn btn-primario" type="button" onClick={agendarCadPc}>Salvar</button>
+                            <button className="btn btn-secundario" type="button" onClick={() => { setCadAgendarId(null); setCadAgendarDT(""); }}>Cancelar</button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="texto-suave">Nenhum pré-cadastro vinculado a este caso.</div>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                        <button className="btn btn-primario" type="button" onClick={criarCadPc}>
+                          Criar pré-cadastro
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <CrasPiaCard apiBase={apiBase} apiFetch={apiFetch} caso={sel} onChanged={() => { if (sel?.id) { loadHistorico(sel.id); carregarLinhaMetro(sel.id); } }} />
+
+                <div className="card" style={{ padding: 12, borderRadius: 18, marginTop: 12 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Ações</div>
+
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <select className="input" value={etapaDestino} onChange={(e) => setEtapaDestino(e.target.value)}>
+                      <option value="">Avançar para…</option>
+                      {etapas.map((e) => (
+                        <option key={e.codigo} value={e.codigo}>{e.codigo} — {e.nome}</option>
+                      ))}
+                    </select>
+
+                    <textarea className="input" rows={2} placeholder="Observações (opcional)" value={obsAcao} onChange={(e) => setObsAcao(e.target.value)} />
+
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button className="btn btn-primario" type="button" onClick={avancar}>Avançar etapa</button>
+                      <button className="btn btn-secundario" type="button" onClick={validar} disabled={!sel.aguardando_validacao}>Validar recebimento</button>
+                      <button className="btn btn-secundario" type="button" onClick={encerrar}>Encerrar caso</button>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+                      <input className="input" placeholder="Motivo de estagnação" value={motivoEstag} onChange={(e) => setMotivoEstag(e.target.value)} />
+                      <button className="btn btn-secundario" type="button" onClick={estagnar}>Estagnar</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 18, marginTop: 12 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Histórico (auditável)</div>
+                  <div style={{ display: "grid", gap: 8, maxHeight: 240, overflow: "auto" }}>
+                    {(historicoUI || []).map((h) => (
+                      <div key={h.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                        <div style={{ fontWeight: 900 }}>{String(h.tipo_acao || "").toUpperCase()} · {h.etapa}</div>
+                        <div className="texto-suave">{h.usuario_nome || "—"} · {h.criado_em ? new Date(h.criado_em).toLocaleString() : "—"}</div>
+                        {h.motivo_estagnacao ? <div className="texto-suave">Motivo: {h.motivo_estagnacao}</div> : null}
+                        {h.observacoes ? (h._is_suas ? (
+                          <pre style={{ whiteSpace: "pre-wrap", marginTop: 6, fontSize: 12, lineHeight: 1.35, background: "rgba(2,6,23,.03)", padding: 10, borderRadius: 12, border: "1px solid rgba(2,6,23,.06)" }}>
+                            {h.observacoes}
+                          </pre>
+                        ) : (
+                          <div className="texto-suave">Obs: {h.observacoes}</div>
+                        )) : null}
+                      </div>
+                    ))}
+                    {!(historicoUI || []).length ? <div className="texto-suave">Sem histórico ainda.</div> : null}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,191 @@
+import React from "react";
+
+function Surface({ children, style = {} }) {
+  return (
+    <div
+      style={{
+        borderRadius: 26,
+        padding: 18,
+        background: "rgba(255,255,255,0.70)",
+        border: "1px solid rgba(0,0,0,0.06)",
+        boxShadow: "0 18px 60px rgba(0,0,0,0.12)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Pill({ text }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(122, 92, 255, 0.25)",
+        background: "rgba(122, 92, 255, 0.10)",
+        fontSize: 12,
+        fontWeight: 900,
+        letterSpacing: 1.2,
+        textTransform: "uppercase",
+        color: "rgba(92, 74, 220, 1)",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function Btn({ children, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "12px 16px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "rgba(255,255,255,0.85)",
+        fontWeight: 950,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Callout({ title, items }) {
+  return (
+    <div
+      style={{
+        borderRadius: 22,
+        padding: 16,
+        border: "1px solid rgba(122,92,255,0.20)",
+        background: "rgba(122,92,255,0.08)",
+      }}
+    >
+      <div style={{ fontWeight: 980, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {items.map((x, i) => (
+          <div key={i} style={{ display: "flex", gap: 10 }}>
+            <span aria-hidden="true">✅</span>
+            <div style={{ opacity: 0.92 }}>{x}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function H2({ children }) {
+  return <h2 style={{ fontSize: 22, marginTop: 24, marginBottom: 10 }}>{children}</h2>;
+}
+
+export default function ArtigoPage() {
+  const back = () => {
+    const u = new URL(window.location.href);
+    u.searchParams.delete("artigo");
+    window.history.pushState({}, "", u.toString());
+    window.location.reload();
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <Btn onClick={back}>← Voltar</Btn>
+        <Btn onClick={() => window.print()}>Imprimir / PDF</Btn>
+      </div>
+
+      <Surface>
+        <Pill text="ARTIGO" />
+        <h1 style={{ fontSize: 40, lineHeight: 1.05, marginTop: 10, marginBottom: 8 }}>
+          O Nó Estrutural da Gestão nas Prefeituras
+        </h1>
+        <div style={{ opacity: 0.8, fontWeight: 700 }}>
+          Por que bons projetos travam — e o que muda quando existe estrutura, dados e governança.
+        </div>
+
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
+          <div style={{ opacity: 0.92, fontSize: 16, lineHeight: 1.6 }}>
+            <p>
+              A administração pública municipal, sobretudo em cidades de pequeno e médio porte, enfrenta desafios que vão muito além da falta de
+              recursos financeiros. Há fatores estruturais que impedem que políticas públicas sejam corretamente elaboradas, executadas, monitoradas e avaliadas —
+              ou seja, impedem que o ciclo completo da gestão governamental funcione.
+            </p>
+            <p>
+              Não é apenas falta de capacidade técnica: é o arranjo institucional como um todo — processos, fluxos, softwares, organogramas, cultura administrativa e normas —
+              que frequentemente impede as etapas naturais: planejar com diagnóstico, executar com continuidade, monitorar com indicadores, avaliar com método e ajustar com evidências.
+            </p>
+          </div>
+
+          <Callout
+            title="As 5 etapas que a estrutura deveria sustentar"
+            items={[
+              "Planejar com base em diagnóstico e dados",
+              "Executar com continuidade",
+              "Monitorar com indicadores confiáveis",
+              "Avaliar com método",
+              "Ajustar ações com base em evidências",
+            ]}
+          />
+        </div>
+
+        <H2>Obstáculos estruturais mais comuns</H2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Callout
+            title="Operação fragmentada"
+            items={[
+              "Processos manuais e burocráticos",
+              "Sistemas não integrados",
+              "Ausência de governança entre secretarias",
+            ]}
+          />
+          <Callout
+            title="Gestão reativa"
+            items={[
+              "Perda de memória institucional a cada troca de governo",
+              "Cultura do “apagar incêndios”",
+              "Baixa clareza de prioridades governamentais",
+            ]}
+          />
+        </div>
+
+        <H2>Dados e governança da informação</H2>
+        <Callout
+          title="Planejar sem dados é governar no escuro"
+          items={[
+            "Bases não integradas e indicadores irregulares",
+            "Pouca cultura de evidências e análise",
+            "Decisões por pressão e intuição (não por diagnóstico)",
+          ]}
+        />
+
+        <H2>Conclusão</H2>
+        <Callout
+          title="O desafio da próxima década"
+          items={[
+            "Equipes suficientes e valorizadas",
+            "Capacitação contínua e orientada ao cotidiano",
+            "Estabilidade e profissionalização",
+            "Sistemas integrados e dados confiáveis",
+            "Planejamento com direção clara e cultura de evidências",
+          ]}
+        />
+
+        <div style={{ marginTop: 18, opacity: 0.85 }}>
+          <div style={{ fontWeight: 900 }}>José Antônio da Silva Júnior</div>
+          <div>Doutor em Ciências Sociais</div>
+          <div>Secretário Executivo do CONCEN</div>
+          <div>CEO da Ideal Desenvolvimento Estratégico</div>
+        </div>
+      </Surface>
+    </div>
+  );
+}

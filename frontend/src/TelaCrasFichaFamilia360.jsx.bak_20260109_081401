@@ -1,0 +1,494 @@
+import { useEffect, useMemo, useState } from "react";
+
+function fmt(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("pt-BR");
+}
+function chip(kind) {
+  const base = { padding: "6px 12px", borderRadius: 999, fontWeight: 900, fontSize: 12, border: "1px solid rgba(2,6,23,.10)", background: "rgba(148,163,184,.10)" };
+  if (kind === "alta") return { ...base, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.25)" };
+  if (kind === "media") return { ...base, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.25)" };
+  if (kind === "ok") return { ...base, background: "rgba(34,197,94,.12)", border: "1px solid rgba(34,197,94,.25)" };
+  return base;
+}
+
+function dlCSV(filename, csvText) {
+  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function esc(v) {
+  const s = v == null ? "" : String(v);
+  if (s.includes('"') || s.includes(",") || s.includes("\n")) return `"${s.replace(/"/g,'""')}"`;
+  return s;
+}
+function exportPDFSimple(data, periodoStr) {
+  const fam = data?.familia || {};
+  const pend = useMemo(() => {
+    const a = Array.isArray(suas?.pendencias) ? suas.pendencias : [];
+    const b = Array.isArray(data?.pendencias) ? data.pendencias : (data?.pendencias || []);
+    return [...a, ...b];
+  }, [suas, data]);
+  const tl = useMemo(() => {
+    const a = Array.isArray(suas?.timeline) ? suas.timeline : [];
+    const b = Array.isArray(data?.timeline) ? data.timeline : (data?.timeline || []);
+    const all = [...a, ...b];
+    all.sort((x,y)=>{
+      const tx = x?.quando ? new Date(x.quando).getTime() : 0;
+      const ty = y?.quando ? new Date(y.quando).getTime() : 0;
+      return ty - tx;
+    });
+    return all;
+  }, [suas, data]);
+  const membros = data?.membros || [];
+
+  const htmlM = membros.map((m) => `<tr><td>${esc(m.pessoa?.nome || "")}</td><td>${esc(m.pessoa?.cpf || "")}</td><td>${esc(m.pessoa?.nis || "")}</td></tr>`).join("");
+  const htmlPend = pend.map((p) => `<tr><td>${esc(p.tipo)}</td><td>${esc(p.gravidade)}</td><td>${esc(p.detalhe)}</td></tr>`).join("");
+  const htmlTl = tl.slice(0,80).map((e) => `<tr><td>${esc(e.quando)}</td><td>${esc(e.titulo)}</td><td>${esc(e.detalhe)}</td></tr>`).join("");
+
+  const html = `
+  <html><head><meta charset="utf-8"/>
+  <title>Ficha da Família</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;padding:24px}
+    h1{margin:0 0 6px 0}
+    .muted{color:#555;margin:0 0 14px 0}
+    table{border-collapse:collapse;width:100%}
+    th,td{border-bottom:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8fafc}
+  </style></head><body>
+    <h1>Ficha da Família</h1>
+    <p class="muted">Período: ${esc(periodoStr)} · Família #${esc(fam.id)} · NIS: ${esc(fam.nis_familia)} · Bairro: ${esc(fam.bairro)}</p>
+
+    <h2>Membros</h2>
+    <table><thead><tr><th>Nome</th><th>CPF</th><th>NIS</th></tr></thead><tbody>${htmlM}</tbody></table>
+
+    <h2 style="margin-top:18px;">Pendências</h2>
+    <table><thead><tr><th>Tipo</th><th>Gravidade</th><th>Detalhe</th></tr></thead><tbody>${htmlPend}</tbody></table>
+
+    <h2 style="margin-top:18px;">Timeline</h2>
+    <table><thead><tr><th>Quando</th><th>Evento</th><th>Obs</th></tr></thead><tbody>${htmlTl}</tbody></table>
+  </body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return alert("Pop-up bloqueado. Permita pop-ups para exportar PDF.");
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(() => { w.focus(); w.print(); }, 400);
+}
+
+export default function TelaCrasFichaFamilia360({ apiBase, apiFetch, familiaId, onOpenPessoa }) {
+  const [tab, setTab] = useState("resumo");
+  const [highlight, setHighlight] = useState("");
+  const [showOnlyContext, setShowOnlyContext] = useState(true);
+
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [familias, setFamilias] = useState([]);
+  const [famSel, setFamSel] = useState(familiaId || null);
+  const [data, setData] = useState(null);
+
+  // Encaminhamentos SUAS (banco): pendências e timeline entram no 360
+  const [suas, setSuas] = useState({ pendencias: [], timeline: [] });
+
+  const [anexos, setAnexos] = useState([]);
+  const [anTitulo, setAnTitulo] = useState("");
+  const [anUrl, setAnUrl] = useState("");
+  const [anTipo, setAnTipo] = useState("");
+  const [upFile, setUpFile] = useState(null);
+
+  const periodoStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+
+  // Consome flags (se um dia você fizer drill-down família no relatório)
+  useEffect(() => {
+    try {
+      const ttab = localStorage.getItem("cras_ficha_familia_tab");
+      const hh = localStorage.getItem("cras_ficha_familia_highlight");
+      if (ttab) setTab(ttab);
+      if (hh) { setHighlight(hh); setShowOnlyContext(true); }
+      localStorage.removeItem("cras_ficha_familia_tab");
+      localStorage.removeItem("cras_ficha_familia_highlight");
+    } catch {}
+  }, []);
+
+  async function loadFamilias() {
+    try {
+      const r = await apiFetch(`${apiBase}/cras/cadastros/familias`);
+      if (!r.ok) return setFamilias([]);
+      const j = await r.json();
+      setFamilias(Array.isArray(j) ? j : []);
+    } catch {
+      setFamilias([]);
+    }
+  }
+
+  async function loadFicha() {
+    if (!famSel) { setData(null); return; }
+    setErro(""); setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      const d = new Date();
+      qs.set("ano", String(d.getFullYear()));
+      qs.set("mes", String(d.getMonth() + 1));
+      const r = await apiFetch(`${apiBase}/cras/ficha/familias/${Number(famSel)}?${qs.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      setData(await r.json());
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao carregar ficha da família.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  function _isSuasAberto(enc) {
+    const st = String(enc?.status || "").toLowerCase();
+    return st && st !== "concluido" && st !== "concluído" && st !== "cancelado";
+  }
+  function _isSuasVencido(enc) {
+    if (!_isSuasAberto(enc)) return false;
+    const st = String(enc?.status || "").toLowerCase();
+    if (st === "retorno_enviado") return false;
+    const pr = enc?.prazo_retorno;
+    if (!pr) return false;
+    try {
+      const prazo = new Date(String(pr) + "T00:00:00").getTime();
+      const hoje = new Date(new Date().toISOString().slice(0,10) + "T00:00:00").getTime();
+      return prazo < hoje;
+    } catch { return false; }
+  }
+
+  async function loadSuas360() {
+    const alvo = famSel;
+    if (!alvo) { setSuas({ pendencias: [], timeline: [] }); return; }
+    try {
+      const params = new URLSearchParams();
+      params.set("modulo", "CRAS");
+      params.set("view", "all");
+      params.set("include_events", "0");
+      params.set("familia_id", String(alvo));
+      try {
+        const fid = data?.familia?.id;
+        if (fid && "familia" === "pessoa") params.set("familia_id", String(fid));
+      } catch {}
+      const r = await apiFetch(`${apiBase}/suas/encaminhamentos?${params.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : [];
+      const vencidos = arr.filter(_isSuasVencido).length;
+      const abertos = arr.filter(_isSuasAberto).length;
+      const pend = [];
+      if (vencidos) {
+        pend.push({ tipo: "suas_sem_devolutiva", gravidade: vencidos >= 2 ? "alta" : "media", referencia: "Encaminhamentos SUAS", detalhe: `${vencidos} encaminhamento(s) com prazo vencido e sem contrarreferência.`, sugerido: "Cobrar devolutiva, registrar retorno e concluir quando resolvido." });
+      } else if (abertos) {
+        pend.push({ tipo: "suas_abertos", gravidade: "media", referencia: "Encaminhamentos SUAS", detalhe: `${abertos} encaminhamento(s) SUAS em aberto.`, sugerido: "Acompanhar status e registrar devolutiva quando houver." });
+      }
+      const tl = [];
+      arr.slice(0, 120).forEach((e) => {
+        const origem = String(e?.origem_modulo || "").toUpperCase();
+        const destino = String(e?.destino_modulo || "").toUpperCase();
+        const other = origem === "CRAS" ? (destino || "SUAS") : (origem || "SUAS");
+        const when = e?.retorno_em || e?.cobranca_ultimo_em || e?.status_em || e?.atualizado_em || e?.criado_em || null;
+        const st = String(e?.status || "").toUpperCase();
+        const titulo = `SUAS · ${other} · ${st}`;
+        const detalhe = [
+          e?.assunto ? `Assunto: ${e.assunto}` : null,
+          e?.prazo_retorno ? `Prazo: ${e.prazo_retorno}` : null,
+          e?.motivo ? `Motivo: ${String(e.motivo).slice(0, 380)}` : null,
+          e?.retorno_texto ? `Retorno: ${String(e.retorno_texto).slice(0, 380)}` : null,
+          e?.cobranca_ultimo_texto ? `Cobrança: ${String(e.cobranca_ultimo_texto).slice(0, 240)}` : null,
+        ].filter(Boolean).join(" · ");
+        tl.push({ tipo: "suas_encaminhamento", quando: when, titulo, autor: e?.atualizado_por_nome || e?.criado_por_nome || null, detalhe, caso_id: e?.origem_caso_id || e?.destino_caso_id || null });
+      });
+      tl.sort((a,b) => (b?.quando ? new Date(b.quando).getTime():0) - (a?.quando ? new Date(a.quando).getTime():0));
+      setSuas({ pendencias: pend, timeline: tl.slice(0, 260) });
+    } catch (e) {
+      console.error(e);
+      setSuas({ pendencias: [], timeline: [] });
+    }
+  }
+
+  async function loadAnexos() {
+    if (!famSel) { setAnexos([]); return; }
+    try {
+      const qs = new URLSearchParams();
+      qs.set("alvo_tipo", "familia");
+      qs.set("alvo_id", String(famSel));
+      const r = await apiFetch(`${apiBase}/cras/ficha/anexos?${qs.toString()}`);
+      if (!r.ok) { setAnexos([]); return; }
+      const j = await r.json();
+      setAnexos(Array.isArray(j) ? j : []);
+    } catch { setAnexos([]); }
+  }
+
+  async function addAnexoLink() {
+    if (!famSel) return;
+    if (!anTitulo.trim() || !anUrl.trim()) return setErro("Título e URL são obrigatórios.");
+    setErro("");
+    try {
+      const payload = { alvo_tipo: "familia", alvo_id: Number(famSel), titulo: anTitulo.trim(), url: anUrl.trim(), tipo: anTipo || null };
+      const r = await apiFetch(`${apiBase}/cras/ficha/anexos`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(await r.text());
+      setAnTitulo(""); setAnUrl(""); setAnTipo("");
+      await loadAnexos();
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao salvar anexo.");
+    }
+  }
+
+  async function uploadArquivo() {
+    if (!famSel || !upFile) return;
+    setErro("");
+    try {
+      const fd = new FormData();
+      fd.append("alvo_tipo", "familia");
+      fd.append("alvo_id", String(famSel));
+      fd.append("titulo", anTitulo || upFile.name);
+      if (anTipo) fd.append("tipo", anTipo);
+      fd.append("file", upFile);
+
+      const r = await apiFetch(`${apiBase}/cras/ficha/uploads`, { method: "POST", body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      setUpFile(null);
+      setAnTitulo(""); setAnTipo("");
+      await loadAnexos();
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao enviar arquivo.");
+    }
+  }
+
+  // Auditoria: se abriu via relatório (highlight), registra evento
+  useEffect(() => {
+    if (!highlight || !famSel) return;
+    (async () => {
+      try {
+        await apiFetch(`${apiBase}/cras/ficha/eventos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alvo_tipo: "familia", alvo_id: Number(famSel), tipo: "abertura_via_relatorio", detalhe: highlight }),
+        });
+      } catch {}
+    })();
+    // eslint-disable-next-line
+  }, [highlight, famSel]);
+
+  useEffect(() => { loadFamilias(); }, []); // eslint-disable-line
+  useEffect(() => { if (familiaId) setFamSel(familiaId); }, [familiaId]);
+  useEffect(() => { loadFicha(); loadAnexos(); }, [famSel]); // eslint-disable-line
+  useEffect(() => { loadSuas360(); }, [famSel]); // eslint-disable-line
+
+  useEffect(() => { if (tab === "documentos") loadAnexos(); }, [tab]); // eslint-disable-line
+
+  const pend = data?.pendencias || [];
+  const conds = data?.condicionalidades || [];
+  const tl = data?.timeline || [];
+  const membros = data?.membros || [];
+
+  const pendView = useMemo(() => {
+    if (!highlight) return pend;
+    const arr = [...pend].sort((a, b) => (a.tipo === highlight ? -1 : 0) - (b.tipo === highlight ? -1 : 0));
+    return showOnlyContext ? arr.filter((x) => x.tipo === highlight) : arr;
+  }, [pend, highlight, showOnlyContext]);
+
+  return (
+    <div className="layout-1col">
+      <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Ficha da Família (360°)</div>
+            <div className="texto-suave">Período: <strong>{periodoStr}</strong></div>
+          </div>
+
+          <div style={{ minWidth: 520 }}>
+            <div className="texto-suave">Selecionar família: <strong>{familias.length}</strong></div>
+            <select className="input" value={famSel || ""} onChange={(e) => { const v = e.target.value; setFamSel(v ? Number(v) : null); try { if (v) localStorage.setItem("cras_ficha_familia_id", v); } catch {} }}>
+              <option value="">Selecione…</option>
+              {familias.map((f) => (
+                <option key={f.id} value={f.id}>Família #{f.id} · NIS: {f.nis_familia || "—"} · {f.bairro || "—"}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => { loadFicha(); loadAnexos(); }}>Atualizar</button>
+
+            <button className="btn btn-secundario btn-secundario-mini" type="button" disabled={!data} onClick={() => {
+              const header = ["nome","cpf","nis"];
+              const lines = [header.join(",")];
+              (membros||[]).forEach((m) => lines.push([m.pessoa?.nome, m.pessoa?.cpf, m.pessoa?.nis].map(esc).join(",")));
+              dlCSV(`familia_membros_${data.familia?.id || "familia"}_${periodoStr}.csv`, lines.join("\n"));
+            }}>CSV membros</button>
+
+            <button className="btn btn-secundario btn-secundario-mini" type="button" disabled={!data} onClick={() => {
+              const header = ["tipo","gravidade","detalhe"];
+              const lines = [header.join(",")];
+              (data.pendencias||[]).forEach((p) => lines.push([p.tipo,p.gravidade,p.detalhe].map(esc).join(",")));
+              dlCSV(`familia_pendencias_${data.familia?.id || "familia"}_${periodoStr}.csv`, lines.join("\n"));
+            }}>CSV pendências</button>
+
+            <button className="btn btn-secundario btn-secundario-mini" type="button" disabled={!data} onClick={() => {
+              const header = ["quando","titulo","detalhe"];
+              const lines = [header.join(",")];
+              (data.timeline||[]).forEach((e) => lines.push([e.quando,e.titulo,e.detalhe].map(esc).join(",")));
+              dlCSV(`familia_timeline_${data.familia?.id || "familia"}_${periodoStr}.csv`, lines.join("\n"));
+            }}>CSV timeline</button>
+
+            <button className="btn btn-primario btn-primario-mini" type="button" disabled={!data} onClick={() => exportPDFSimple(data, periodoStr)}>PDF</button>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+          {["resumo","pendencias","condicionalidades","timeline","documentos"].map((k) => (
+            <button key={k} type="button" className={"btn btn-secundario btn-secundario-mini" + (tab === k ? " btn-primario" : "")} onClick={() => setTab(k)}>
+              {k === "resumo" ? "Resumo" : k === "pendencias" ? "Pendências" : k === "condicionalidades" ? "Condicionalidades" : k === "timeline" ? "Timeline" : "Documentos"}
+            </button>
+          ))}
+        </div>
+
+        {erro ? <div className="card" style={{ padding: 12, borderRadius: 14, marginTop: 10 }}><strong>{erro}</strong></div> : null}
+        {loading ? <div className="texto-suave" style={{ marginTop: 10 }}>Carregando…</div> : null}
+      </div>
+
+      {data ? (
+        <>
+          {tab === "resumo" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Resumo</div>
+              <div className="texto-suave" style={{ marginTop: 8 }}>
+                Família #{data.familia?.id} · NIS: <strong>{data.familia?.nis_familia || "—"}</strong> · Bairro: <strong>{data.familia?.bairro || "—"}</strong>
+              </div>
+              <div className="texto-suave">Membros: <strong>{membros.length}</strong> · Pendências: <strong>{pend.length}</strong> · Eventos: <strong>{tl.length}</strong></div>
+
+              <div style={{ marginTop: 12, fontWeight: 900 }} className="texto-suave">Membros (clique para ficha individual)</div>
+              <div style={{ display: "grid", gap: 8, marginTop: 8, maxHeight: 260, overflow: "auto" }}>
+                {membros.map((m, i) => (
+                  <button key={i} type="button" className="card" style={{ padding: 10, borderRadius: 14, textAlign:"left", cursor:"pointer" }}
+                    onClick={() => {
+                      const pid = m.pessoa?.id || m.membro?.pessoa_id;
+                      if (!pid) return;
+                      try { localStorage.setItem("cras_ficha_pessoa_id", String(pid)); } catch {}
+                      onOpenPessoa?.(pid);
+                    }}>
+                    <div style={{ fontWeight: 900 }}>{m.pessoa?.nome || `Pessoa #${m.membro?.pessoa_id}`}</div>
+                    <div className="texto-suave">CPF: {m.pessoa?.cpf || "—"} · NIS: {m.pessoa?.nis || "—"}</div>
+                  </button>
+                ))}
+                {!membros.length ? <div className="texto-suave">Sem membros.</div> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "pendencias" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Pendências</div>
+
+              {highlight ? (
+                <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 10, border: "1px solid rgba(99,102,241,.22)", background: "rgba(239,246,255,.6)" }}>
+                  <div><strong>Contexto:</strong> {highlight}</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                    <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => setShowOnlyContext((v) => !v)}>
+                      {showOnlyContext ? "Ver todas" : "Ver só contexto"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {pendView.map((p, i) => (
+                  <div key={i} className="card" style={{ padding: 12, borderRadius: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900 }}>{p.tipo}</div>
+                      <span style={chip(p.gravidade)}>{p.gravidade}</span>
+                    </div>
+                    <div className="texto-suave" style={{ marginTop: 8 }}>{p.detalhe}</div>
+                    {p.sugerido ? <div className="texto-suave">Sugestão: <strong>{p.sugerido}</strong></div> : null}
+                  </div>
+                ))}
+                {!pendView.length ? <div className="texto-suave">Sem pendências nesse filtro ✅</div> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "condicionalidades" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Condicionalidades</div>
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {conds.map((c, i) => (
+                  <div key={i} className="card" style={{ padding: 12, borderRadius: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900 }}>{c.programa}</div>
+                      <span style={chip(c.ok ? "ok" : "media")}>{c.ok ? "OK" : "ATENÇÃO"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "timeline" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Timeline</div>
+              <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 420, overflow: "auto" }}>
+                {tl.map((e, i) => (
+                  <div key={i} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                    <div style={{ fontWeight: 900 }}>{e.titulo}</div>
+                    <div className="texto-suave">{fmt(e.quando)}{e.autor ? ` · ${e.autor}` : ""}</div>
+                    {e.detalhe ? <div className="texto-suave">Obs: {e.detalhe}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {tab === "documentos" ? (
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Documentos/Anexos (Família)</div>
+              <div className="texto-suave" style={{ marginTop: 8 }}>Salvar links ou enviar arquivo (MVP local).</div>
+
+              <div className="card" style={{ padding: 12, borderRadius: 16, marginTop: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: 10 }}>
+                  <input className="input" placeholder="Título" value={anTitulo} onChange={(e) => setAnTitulo(e.target.value)} />
+                  <input className="input" placeholder="URL (opcional)" value={anUrl} onChange={(e) => setAnUrl(e.target.value)} />
+                  <input className="input" placeholder="Tipo (opcional)" value={anTipo} onChange={(e) => setAnTipo(e.target.value)} />
+                  <button className="btn btn-secundario" type="button" onClick={addAnexoLink}>Adicionar link</button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, marginTop: 10 }}>
+                  <input type="file" className="input" onChange={(e) => setUpFile(e.target.files?.[0] || null)} />
+                  <button className="btn btn-primario" type="button" onClick={uploadArquivo} disabled={!upFile}>Enviar arquivo</button>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                {anexos.map((a) => (
+                  <div key={a.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                    <div style={{ fontWeight: 900 }}>{a.titulo}</div>
+                    <div className="texto-suave">{a.tipo ? `Tipo: ${a.tipo} · ` : ""}{fmt(a.criado_em)}</div>
+                    <div className="texto-suave" style={{ marginTop: 6 }}>
+                      <a href={a.url} target="_blank" rel="noreferrer">{a.url}</a>
+                    </div>
+                  </div>
+                ))}
+                {!anexos.length ? <div className="texto-suave">Nenhum anexo ainda.</div> : null}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}

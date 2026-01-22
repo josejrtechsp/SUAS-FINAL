@@ -1,0 +1,155 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+export default function TelaCrasInicioDashboard({ apiBase, apiFetch, onNavigate }) {
+  const [data, setData] = useState(null);
+  const [tarefasResumo, setTarefasResumo] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setErro(null);
+    try {
+      // Overview principal (preferir /cras/dashboard/overview, fallback /cras/relatorios/overview)
+      let res = null;
+      let json = null;
+
+      try {
+        res = await apiFetch(`${apiBase}/cras/dashboard/overview`);
+      } catch (e) {
+        res = await apiFetch(`${apiBase}/cras/relatorios/overview`);
+      }
+
+      json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.detail || `Falha no dashboard (HTTP ${res.status})`);
+      }
+      setData(json);
+
+      // Resumo de tarefas (SLA por técnico)
+      try {
+        const tr = await apiFetch(`${apiBase}/cras/tarefas/resumo`);
+        const tj = await tr.json().catch(() => null);
+        if (tr.ok) setTarefasResumo(tj);
+        else setTarefasResumo(null);
+      } catch {
+        setTarefasResumo(null);
+      }
+    } catch (e) {
+      setErro(String(e?.message || e));
+      setData(null);
+      setTarefasResumo(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+      setData(d);
+    } catch (e) {
+      setErro(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const cards = useMemo(() => {
+    const d = data || {};
+    return [
+      { k: "Usuários", v: d.pessoas_total ?? d.total_pessoas ?? "—", hint: "Pessoas cadastradas/atendidas" },
+      { k: "Famílias", v: d.familias_total ?? d.total_familias ?? "—", hint: "Famílias cadastradas" },
+      { k: "Casos abertos", v: d.casos_abertos ?? d.total_casos_abertos ?? "—", hint: "Casos em andamento" },
+      { k: "Pendências (SLA)", v: d.pendencias_sla ?? d.total_pendencias ?? "—", hint: "Itens vencendo/vencidos" },
+      { k: "SCFV presença (mês)", v: d.scfv_presencas_mes ?? "—", hint: "Presenças registradas no mês" },
+      { k: "SCFV ausências (mês)", v: d.scfv_ausencias_mes ?? "—", hint: "Ausências no mês" },
+      { k: "Programas presença (mês)", v: d.programas_presencas_mes ?? "—", hint: "Presenças em encontros" },
+      { k: "CadÚnico pendente", v: d.cadunico_pendentes ?? "—", hint: "Pré-cadastro/agendamento/atrasos" },
+    ];
+  }, [data]);
+
+  return (
+    <div>
+      {erro ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+          <strong>Erro:</strong> {erro}
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="texto-suave">Painel operacional do CRAS (gestão por dados e ações)</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="btn btn-secundario" type="button" onClick={load} disabled={loading}>
+            {loading ? "Atualizando..." : "Atualizar"}
+          </button>
+          <button className="btn btn-primario" type="button" onClick={() => onNavigate?.({ tab: "relatorios" })}>
+            Ir para Relatórios
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(4, minmax(220px, 1fr))", gap: 12 }}>
+        {cards.map((c) => (
+          <div key={c.k} className="card" style={{ padding: 12, borderRadius: 16 }}>
+            <div className="texto-suave" style={{ fontSize: 13 }}>{c.k}</div>
+            <div style={{ fontSize: 28, fontWeight: 950, marginTop: 6 }}>{c.v}</div>
+            <div className="texto-suave" style={{ marginTop: 4 }}>{c.hint}</div>
+          </div>
+        ))}
+      </div>
+
+
+      <div className="card" style={{ padding: 12, borderRadius: 16, marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ fontWeight: 950 }}>Equipe e prazos (tarefas/SLA)</div>
+          <div className="texto-suave">
+            Abertas: <strong>{tarefasResumo?.total_abertas ?? "—"}</strong> · Vencidas: <strong>{tarefasResumo?.total_vencidas ?? "—"}</strong>
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto", marginTop: 10 }}>
+          <table className="table" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Técnico</th>
+                <th style={{ textAlign: "right" }}>Abertas</th>
+                <th style={{ textAlign: "right" }}>Vencidas</th>
+                <th style={{ textAlign: "right" }}>Concluídas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(tarefasResumo?.por_tecnico || []).map((x, idx) => (
+                <tr key={idx}>
+                  <td><strong>{x.responsavel_nome || "—"}</strong></td>
+                  <td style={{ textAlign: "right" }}>{x.abertas}</td>
+                  <td style={{ textAlign: "right" }}>{x.vencidas}</td>
+                  <td style={{ textAlign: "right" }}>{x.concluidas}</td>
+                </tr>
+              ))}
+              {(!tarefasResumo?.por_tecnico || tarefasResumo.por_tecnico.length === 0) ? (
+                <tr><td colSpan={4} className="texto-suave">Sem tarefas cadastradas/atribuídas ainda.</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="texto-suave" style={{ marginTop: 8 }}>
+          Dica: tarefas são a base do SLA por servidor. Use para registrar “visita domiciliar”, “contato”, “atualizar CadÚnico”, “cobrar devolutiva”, etc.
+        </div>
+      </div>
+
+
+      {/* Ações rápidas */}
+      <div className="card" style={{ padding: 12, borderRadius: 16, marginTop: 12 }}>
+        <div style={{ fontWeight: 950 }}>Ações rápidas</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+          <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "casos" })}>Casos</button>
+          <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "cadunico" })}>CadÚnico</button>
+          <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "scfv" })}>SCFV</button>
+          <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "programas" })}>Programas</button>
+          <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "ficha" })}>Ficha 360°</button>
+        </div>
+      </div>
+    </div>
+  );
+}

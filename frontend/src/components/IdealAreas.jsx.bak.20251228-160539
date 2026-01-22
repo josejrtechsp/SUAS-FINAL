@@ -1,0 +1,697 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+/* ---------- utils ---------- */
+function useWindowWidth() {
+  const [w, setW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const on = () => setW(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return w;
+}
+
+function tryClickByText(texts = []) {
+  const els = Array.from(document.querySelectorAll("button, a"));
+  for (const t of texts) {
+    const hit = els.find((el) => (el.innerText || "").trim().toLowerCase().includes(t.toLowerCase()));
+    if (hit) {
+      hit.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+function openHubLogin() {
+  const ok = tryClickByText(["Acessar o painel", "Escolher módulo", "Entrar no sistema"]);
+  if (!ok) window.location.href = "/app?mod=poprua";
+}
+
+function goContato() {
+  const el = document.getElementById("contato");
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  window.location.href =
+    "mailto:?subject=Solicitar%20demonstra%C3%A7%C3%A3o%20IDEAL&body=Ol%C3%A1%2C%20quero%20agendar%20uma%20demonstra%C3%A7%C3%A3o%20da%20IDEAL.%0A%0A%C3%81rea%20de%20interesse%3A%20(SUAS%2FSa%C3%BAde%2FEduca%C3%A7%C3%A3o%2FPesquisas)%0AMunic%C3%ADpio%2FUF%3A%0ANome%20e%20cargo%3A%0AWhatsApp%3A%0A";
+}
+
+/* ---------- UI ---------- */
+function Surface({ children, onClick, style = {} }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        borderRadius: 26,
+        padding: 18,
+        background: "rgba(255,255,255,0.70)",
+        border: "1px solid rgba(0,0,0,0.06)",
+        boxShadow: "0 18px 60px rgba(0,0,0,0.12)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        ...style,
+        cursor: onClick ? "pointer" : "default",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Btn({ primary, children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      type="button"
+      style={{
+        padding: "12px 16px",
+        borderRadius: 999,
+        border: primary ? "1px solid rgba(122,92,255,0.25)" : "1px solid rgba(0,0,0,0.10)",
+        background: primary ? "rgba(122,92,255,0.95)" : "rgba(255,255,255,0.85)",
+        color: primary ? "white" : "rgba(20,20,30,0.9)",
+        fontWeight: 950,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        boxShadow: primary ? "0 18px 50px rgba(122,92,255,0.28)" : "0 10px 30px rgba(0,0,0,0.08)",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Pill({ text }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(122, 92, 255, 0.25)",
+        background: "rgba(122, 92, 255, 0.10)",
+        fontSize: 12,
+        fontWeight: 900,
+        letterSpacing: 1.2,
+        textTransform: "uppercase",
+        color: "rgba(92, 74, 220, 1)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function MiniCards({ items }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      {items.map((it, i) => (
+        <div
+          key={i}
+          style={{
+            borderRadius: 18,
+            padding: 12,
+            border: "1px solid rgba(0,0,0,0.06)",
+            background: "rgba(255,255,255,0.55)",
+          }}
+        >
+          <div style={{ fontWeight: 950, marginBottom: 6 }}>{it.title}</div>
+          <div style={{ opacity: 0.82, fontSize: 14 }}>{it.desc}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function List({ title, items, icon }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.55)",
+        borderRadius: 20,
+        padding: 14,
+      }}
+    >
+      <div style={{ fontWeight: 980, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {items.map((x, i) => (
+          <div key={i} style={{ display: "flex", gap: 10 }}>
+            <span aria-hidden="true">{icon}</span>
+            <div style={{ opacity: 0.92 }}>{x}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Chips({ title, items }) {
+  return (
+    <div>
+      <div style={{ fontWeight: 980, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        {items.map((t) => (
+          <span
+            key={t}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,0,0,0.08)",
+              background: "rgba(255,255,255,0.75)",
+              fontWeight: 900,
+              opacity: 0.9,
+            }}
+          >
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Audience({ items }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.55)",
+        borderRadius: 20,
+        padding: 14,
+      }}
+    >
+      <div style={{ fontWeight: 980, marginBottom: 10 }}>Para quem é</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        {items.map((t) => (
+          <span
+            key={t}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,0,0,0.08)",
+              background: "rgba(255,255,255,0.75)",
+              fontWeight: 900,
+              opacity: 0.92,
+            }}
+          >
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- dashboard preview ---------- */
+function KPI({ label, value }) {
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        padding: 10,
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.60)",
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 980, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+function Bars({ values = [] }) {
+  const max = Math.max(1, ...values);
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        padding: 12,
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.60)",
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900, marginBottom: 10 }}>Exemplo de evolução</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 70 }}>
+        {values.map((v, i) => (
+          <div
+            key={i}
+            style={{
+              width: 12,
+              height: Math.round((v / max) * 70),
+              borderRadius: 8,
+              border: "1px solid rgba(122,92,255,0.18)",
+              background: "rgba(122,92,255,0.22)",
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DashboardPreview({ d }) {
+  const presets = {
+    suas: {
+      title: "Exemplo de dashboard (SUAS)",
+      kpis: [
+        ["Casos ativos", "128"],
+        ["Pendências (SLA)", "19"],
+        ["Sem movimento", "7"],
+        ["Retorno da rede", "12"],
+      ],
+      bars: [3, 4, 5, 4, 6, 7, 5, 8, 6, 7, 9, 8],
+    },
+    saude: {
+      title: "Exemplo de dashboard (Saúde)",
+      kpis: [
+        ["Fila (aberta)", "342"],
+        ["Tempo médio", "21d"],
+        ["Produção mês", "1.284"],
+        ["Gargalos", "3"],
+      ],
+      bars: [5, 6, 7, 6, 8, 9, 10, 9, 11, 12, 13, 12],
+    },
+    educacao: {
+      title: "Exemplo de dashboard (Educação)",
+      kpis: [
+        ["Frequência", "92%"],
+        ["Evasão", "3,1%"],
+        ["Ações ativas", "46"],
+        ["Prazos hoje", "8"],
+      ],
+      bars: [8, 7, 7, 8, 9, 9, 10, 9, 11, 11, 12, 12],
+    },
+    pesquisas: {
+      title: "Exemplo de dashboard (Pesquisas)",
+      kpis: [
+        ["Índice geral", "62"],
+        ["Tracking", "+4"],
+        ["Segmentos", "8"],
+        ["Alertas", "2"],
+      ],
+      bars: [50, 52, 54, 55, 56, 58, 60, 62, 61, 63, 64, 66],
+    },
+  };
+
+  const p = presets[d.key] || presets.suas;
+
+  return (
+    <div
+      style={{
+        borderRadius: 22,
+        padding: 14,
+        border: "1px solid rgba(0,0,0,0.06)",
+        background:
+          "linear-gradient(135deg, rgba(122,92,255,0.10), rgba(255,255,255,0.55))",
+        boxShadow: "0 18px 50px rgba(0,0,0,0.10)",
+      }}
+    >
+      <div style={{ fontWeight: 980, marginBottom: 10 }}>{p.title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {p.kpis.map(([label, value]) => (
+          <KPI key={label} label={label} value={value} />
+        ))}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <Bars values={p.bars} />
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.65 }}>
+        * Ilustração (placeholder). O painel real é configurado com seus indicadores.
+      </div>
+    </div>
+  );
+}
+
+/* ---------- routing param ---------- */
+function useAreaParam() {
+  const [area, setArea] = useState(() => new URL(window.location.href).searchParams.get("area") || "");
+  useEffect(() => {
+    const onPop = () => setArea(new URL(window.location.href).searchParams.get("area") || "");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const go = (next) => {
+    const u = new URL(window.location.href);
+    if (next) u.searchParams.set("area", next);
+    else u.searchParams.delete("area");
+    window.history.pushState({}, "", u.toString());
+    setArea(next || "");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  return { area, go };
+}
+
+export default function IdealAreas() {
+  const { area, go } = useAreaParam();
+  const w = useWindowWidth();
+  const mobile = w < 980;
+
+  const defs = useMemo(
+    () => ({
+      suas: {
+        key: "suas",
+        icon: "🤝",
+        pill: "SUAS",
+        menuTitle: "SUAS",
+        menuDesc: "Fluxo, SLA, evidências e rede (CRAS/CREAS/PopRua).",
+        title: "Assistência Social (SUAS)",
+        tagline: "Do atendimento ao relatório: padroniza a rotina, cria continuidade e dá visibilidade de prazos, etapas e resultados.",
+        audience: ["Secretário(a)", "Coordenação CRAS/CREAS", "Técnicos", "Gestão", "Controle social (CMAS)"],
+        mini: [
+          { title: "Anti-caso parado", desc: "Pendências e próximo passo obrigatório com prazo." },
+          { title: "Auditoria e evidências", desc: "Linha do tempo + anexos + trilha do que foi feito." },
+          { title: "Rede com retorno", desc: "Encaminha + cria prazo + cobra devolutiva." },
+          { title: "Gestão e controle social", desc: "Relatórios e indicadores por território/unidade." },
+        ],
+        why: [
+          "Padronização por fluxo (etapas e devolutivas) com SLA por responsável.",
+          "Rastreabilidade por pessoa/família/caso com LGPD por perfil.",
+          "Rede organizada: encaminhamento com prazo e retorno (sem perder evidência).",
+        ],
+        delivers: [
+          "Prontuário simples + linha do tempo",
+          "Pendências/SLA + justificativa de estagnação",
+          "Encaminhamentos com retorno e alertas",
+          "Relatórios (produção, gargalos, rede, demanda)",
+        ],
+        indicators: [
+          "SLA cumprido vs vencido por etapa",
+          "Casos ativos/novos/encerrados por período",
+          "Tempo médio por etapa e por técnico",
+          "Demandas por tema/detalhe e território",
+        ],
+        useCases: [
+          "PopRua: atendimento e acompanhamento",
+          "CRAS: triagem, PAIF/SCFV, CadÚnico e agenda",
+          "CREAS (PAEFI): violações, plano do caso, rede e prazos",
+        ],
+        scope: ["Pop Rua", "CRAS", "CREAS (PAEFI)", "Equipamentos", "Terceiro Setor", "Gestão regional"],
+      },
+
+      saude: {
+        key: "saude",
+        icon: "🩺",
+        pill: "SAÚDE",
+        menuTitle: "Saúde",
+        menuDesc: "Processos por etapa, evidências e indicadores para reduzir fila e gargalos.",
+        title: "Saúde (gestão e execução)",
+        tagline: "Transforma rotina em processo: prazos, responsáveis, evidências e dashboards — sem planilha.",
+        audience: ["Secretário(a)", "Direção de unidade", "Regulação", "Gestão", "Controle interno"],
+        mini: [
+          { title: "Fila sob controle", desc: "Tempo por etapa/serviço com gargalos visíveis." },
+          { title: "Processo auditável", desc: "Registro padronizado + evidências anexadas." },
+          { title: "SLA e pendências", desc: "Atraso vira alerta + justificativa + próxima ação." },
+          { title: "Gestão por indicadores", desc: "Produção, tempo, capacidade e conformidade." },
+        ],
+        why: [
+          "Trilhas por processo (SLA) com responsáveis e prazos visíveis.",
+          "Dashboards acionáveis (fila, produção, tempo, gargalos) para decisão rápida.",
+          "Registro padronizado + evidências anexadas (auditoria e prestação de contas).",
+        ],
+        delivers: [
+          "Fluxos por serviço com SLA e responsável",
+          "Pendências automáticas e justificativa de estagnação",
+          "Dashboards e relatórios (fila/produção/tempo)",
+          "Auditoria e evidências anexadas",
+        ],
+        indicators: [
+          "Tempo de espera por etapa/serviço",
+          "Produção por unidade/equipe",
+          "Gargalos por etapa e motivo",
+          "Pendências por prazo e conformidade",
+        ],
+        useCases: [
+          "Gestão de fila e tempo de espera por serviço",
+          "Processos com evidência (auditoria)",
+          "Relatórios por unidade/equipe (produção e gargalos)",
+        ],
+        scope: ["Processos", "Registros", "Indicadores", "Auditoria", "Rede (intersetorial)"],
+      },
+
+      educacao: {
+        key: "educacao",
+        icon: "🎓",
+        pill: "EDUCAÇÃO",
+        menuTitle: "Educação",
+        menuDesc: "Fluxos, registros e indicadores para presença, evasão e execução com evidências.",
+        title: "Educação (gestão e resultados)",
+        tagline: "Rotina simples na escola + governança e indicadores para gestão (frequência, evasão, cobertura e execução).",
+        audience: ["Secretário(a)", "Diretores", "Coordenação pedagógica", "Supervisão", "Conselho"],
+        mini: [
+          { title: "Evasão e presença", desc: "Indicadores por território e escola." },
+          { title: "Ação com devolutiva", desc: "Fluxo por etapa com responsável e prazo." },
+          { title: "Registro com evidência", desc: "Histórico por aluno/turma com anexos." },
+          { title: "Relatórios para conselho", desc: "Prestação de contas e trilha auditável." },
+        ],
+        why: [
+          "Rotinas padronizadas e auditáveis (fim do 'cada escola faz de um jeito').",
+          "Indicadores claros para decisão (frequência/evasão/cobertura).",
+          "Acompanhamento por etapa + prazos e pendências (execução de verdade).",
+        ],
+        delivers: [
+          "Registro por aluno/turma com histórico",
+          "Fluxo por etapas (ação → devolutiva → reavaliação)",
+          "Pendências e prazos (priorização)",
+          "Relatórios e indicadores para gestão e conselho",
+        ],
+        indicators: [
+          "Frequência e evasão por território",
+          "Cobertura por programa/ação",
+          "Tempo de resolução por etapa",
+          "Produção por unidade/equipe",
+        ],
+        useCases: [
+          "Busca ativa e acompanhamento de frequência",
+          "Programas e projetos com cobertura e resultados",
+          "Encaminhamentos e devolutivas com rastreabilidade",
+        ],
+        scope: ["Fluxos", "Registros", "Indicadores", "Auditoria", "Campanhas e comunicação"],
+      },
+
+      pesquisas: {
+        key: "pesquisas",
+        icon: "📊",
+        pill: "PESQUISAS",
+        menuTitle: "Pesquisas",
+        menuDesc: "Eleitoral, mercado e qualidade do serviço público — método + execução + recomendação.",
+        title: "Pesquisas e Inteligência",
+        tagline: "Menos achismo, mais decisão: instrumento, amostra, coleta, análise e recomendações acionáveis — com leitura territorial.",
+        audience: ["Prefeito/Gabinete", "Secretarias", "Comunicação", "Planejamento", "Empresas/marketing"],
+        mini: [
+          { title: "Eleitoral (tracking)", desc: "Evolução no tempo e alertas de mudança." },
+          { title: "Mercado", desc: "Segmentação, drivers e oportunidades." },
+          { title: "Serviço público", desc: "Jornada do usuário e qualidade por serviço." },
+          { title: "Diagnóstico territorial", desc: "Leitura por região e priorização de ação." },
+        ],
+        why: [
+          "Pesquisa ponta a ponta (método → coleta → análise → recomendação).",
+          "Dashboards com recortes e evolução no tempo.",
+          "Leitura territorial (segmentação por região e perfil).",
+        ],
+        delivers: [
+          "Tracking eleitoral e alertas",
+          "Pesquisa de mercado e segmentação",
+          "Avaliação de qualidade do serviço público",
+          "Diagnóstico territorial e plano de ação",
+        ],
+        indicators: [
+          "Índices por área/serviço e evolução",
+          "Clusters/segmentos por perfil",
+          "Séries temporais (tracking)",
+          "Priorização impacto x viabilidade",
+        ],
+        useCases: [
+          "Tracking de governo e intenção de voto",
+          "Pesquisa de satisfação por serviço",
+          "Pesquisa de mercado e posicionamento",
+        ],
+        scope: ["Eleitoral (tracking)", "Mercado", "Qualidade do serviço", "Diagnóstico territorial"],
+      },
+    }),
+    []
+  );
+
+  const keys = ["suas", "saude", "educacao", "pesquisas"];
+  const [selected, setSelected] = useState("suas");
+
+  // Página completa (detalhe)
+  if (area) {
+    const d = defs[area];
+    if (!d) return null;
+
+    return (
+      <div style={{ display: "grid", gap: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <Btn onClick={() => go("")}>← Voltar para áreas</Btn>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Btn primary onClick={openHubLogin}>Escolher módulo (login)</Btn>
+            <Btn onClick={goContato}>Agendar demonstração</Btn>
+          </div>
+        </div>
+
+        <Surface>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.25fr 0.75fr", gap: 14, alignItems: "start" }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 999,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "1px solid rgba(122,92,255,0.20)", background: "rgba(122,92,255,0.10)", fontSize: 18
+                }}>{d.icon}</div>
+                <div>
+                  <Pill text={d.pill} />
+                  <div style={{ fontSize: 34, fontWeight: 980, marginTop: 8, lineHeight: 1.05 }}>{d.title}</div>
+                  <div style={{ opacity: 0.78, marginTop: 10 }}>{d.tagline}</div>
+                </div>
+              </div>
+
+              <MiniCards items={d.mini} />
+
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: 14 }}>
+                <List title="Por que é ideal" items={d.why} icon="✅" />
+                <List title="O que entregamos" items={d.delivers} icon="📦" />
+                <List title="Indicadores" items={d.indicators} icon="📊" />
+              </div>
+
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+                <List title="Casos de uso" items={d.useCases} icon="✅" />
+                <div style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.55)", borderRadius: 20, padding: 14 }}>
+                  <Chips title="Escopo / módulos" items={d.scope} />
+                  <div style={{ marginTop: 12 }}>
+                    <Audience items={d.audience} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <DashboardPreview d={d} />
+            </div>
+          </div>
+        </Surface>
+      </div>
+    );
+  }
+
+  const d = defs[selected];
+
+  return (
+    <Surface>
+      {/* Cabeçalho do seletor */}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div>
+          <Pill text="IDEAL · ÁREAS" />
+          <div style={{ fontSize: 40, fontWeight: 980, marginTop: 10, lineHeight: 1.05 }}>
+            Áreas separadas e bem explicadas
+          </div>
+          <div style={{ opacity: 0.78, marginTop: 10 }}>
+            SUAS, Saúde, Educação e Pesquisas — cada uma com proposta, entregas, indicadores, público e exemplos.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Btn primary onClick={() => go(selected)}>Abrir página completa</Btn>
+          <Btn onClick={openHubLogin}>Escolher módulo (login)</Btn>
+          <Btn onClick={goContato}>Agendar demonstração</Btn>
+        </div>
+      </div>
+
+      {/* Layout: menu + painel */}
+      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: mobile ? "1fr" : "360px 1fr", gap: 18 }}>
+        {/* MENU */}
+        <div style={{ display: "grid", gap: 10 }}>
+          {keys.map((k) => {
+            const a = defs[k];
+            const is = k === selected;
+            return (
+              <div
+                key={k}
+                onClick={() => setSelected(k)}
+                style={{
+                  borderRadius: 18,
+                  padding: 14,
+                  border: is ? "1px solid rgba(122,92,255,0.30)" : "1px solid rgba(0,0,0,0.06)",
+                  background: is ? "rgba(122,92,255,0.08)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  display: "grid",
+                  gridTemplateColumns: "44px 1fr",
+                  gap: 12,
+                  alignItems: "center",
+                }}
+              >
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 999,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    border: "1px solid rgba(122,92,255,0.20)",
+                    background: "rgba(122,92,255,0.10)",
+                    fontSize: 18,
+                  }}
+                >
+                  {a.icon}
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 980, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span>{a.menuTitle}</span>
+                    <span style={{ opacity: 0.6, fontWeight: 900, fontSize: 12 }}>{a.pill}</span>
+                  </div>
+                  <div style={{ opacity: 0.78, marginTop: 4, fontSize: 14 }}>{a.menuDesc}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* PAINEL */}
+        <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.15fr 0.85fr", gap: 14 }}>
+            <div>
+              <div>
+                <Pill text={d.pill} />{" "}
+                <span style={{ fontSize: 26, fontWeight: 980, marginLeft: 10 }}>{d.title}</span>
+                <div style={{ opacity: 0.78, marginTop: 10 }}>{d.tagline}</div>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <MiniCards items={d.mini} />
+              </div>
+            </div>
+
+            <div>
+              <DashboardPreview d={d} />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: 14 }}>
+            <List title="Por que é ideal" items={d.why} icon="✅" />
+            <List title="O que entregamos" items={d.delivers} icon="📦" />
+            <List title="Indicadores" items={d.indicators} icon="📊" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+            <List title="Casos de uso" items={d.useCases} icon="✅" />
+            <div style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.55)", borderRadius: 20, padding: 14 }}>
+              <Chips title="Escopo / módulos" items={d.scope} />
+              <div style={{ marginTop: 12 }}>
+                <Audience items={d.audience} />
+              </div>
+              <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Btn primary onClick={() => go(selected)}>Abrir página completa</Btn>
+                <Btn onClick={openHubLogin}>Escolher módulo (login)</Btn>
+                <Btn onClick={goContato}>Agendar demonstração</Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Surface>
+  );
+}

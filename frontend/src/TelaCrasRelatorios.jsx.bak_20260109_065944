@@ -1,0 +1,717 @@
+import { useEffect, useMemo, useState } from "react";
+
+function ymNow() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function csvEscape(v) {
+  const s = v == null ? "" : String(v);
+  if (s.includes("\"") || s.includes(",") || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadCSV(filename, rows) {
+  if (!Array.isArray(rows) || !rows.length) return;
+  const keys = Array.from(
+    rows.reduce((acc, r) => {
+      Object.keys(r || {}).forEach((k) => acc.add(k));
+      return acc;
+    }, new Set())
+  );
+  const lines = [keys.join(",")];
+  for (const r of rows) lines.push(keys.map((k) => csvEscape(r?.[k])).join(","));
+
+  const csv = lines.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5_000);
+}
+
+function printHtml(title, htmlBody) {
+  const w = window.open("", "_blank", "noopener,noreferrer");
+  if (!w) return;
+  w.document.open();
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>${title}</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; padding:16px;}
+    h1{font-size:18px;margin:0 0 12px 0;}
+    table{width:100%;border-collapse:collapse;margin:10px 0;}
+    th,td{border:1px solid #e5e7eb;padding:8px;font-size:12px;text-align:left;vertical-align:top;}
+    .muted{color:#6b7280;font-size:12px;}
+  </style>
+  </head><body>${htmlBody}</body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+export default function TelaCrasRelatorios({ apiBase, apiFetch, onNavigate, view = "painel", onSetView = () => {} }) {
+  const unidadeId = Number(localStorage.getItem("cras_unidade_ativa") || 0) || 1;
+
+
+  const viewKey = String(view || "painel").toLowerCase();
+  const [tab, setTab] = useState("consolidado");
+
+// REL_VIEW_MAP_V2 (subtabs do header controlam qual visão abrir)
+useEffect(() => {
+  if (viewKey === "indicadores") setTab("serie");
+  else setTab("consolidado");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [viewKey]);
+  const [mesAno, setMesAno] = useState(ymNow());
+  const [diasCadunico, setDiasCadunico] = useState(30);
+  const [limiteEvasao, setLimiteEvasao] = useState(3);
+  const [presMin, setPresMin] = useState(75);
+
+  const [overview, setOverview] = useState(null);
+  const [serie, setSerie] = useState(null);
+  const [cruz, setCruz] = useState(null);
+
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const [mesesSerie, setMesesSerie] = useState(12);
+
+  const ym = useMemo(() => {
+    const [y, m] = String(mesAno || "").split("-");
+    return { ano: Number(y || 0) || new Date().getFullYear(), mes: Number(m || 0) || (new Date().getMonth() + 1) };
+  }, [mesAno]);
+
+  async function loadOverview() {
+    setErro("");
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("unidade_id", String(unidadeId));
+      qs.set("ano", String(ym.ano));
+      qs.set("mes", String(ym.mes));
+      qs.set("dias_cadunico", String(diasCadunico));
+      qs.set("limite_evasao", String(limiteEvasao));
+      qs.set("limite_presenca_min", String((Number(presMin) / 100).toFixed(2)));
+
+      const r = await apiFetch(`${apiBase}/cras/relatorios/overview?${qs.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      setOverview(await r.json());
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao carregar relatório consolidado.");
+      setOverview(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadSerie() {
+    setErro("");
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("unidade_id", String(unidadeId));
+      qs.set("meses", String(mesesSerie));
+      qs.set("dias_cadunico", String(diasCadunico));
+      const r = await apiFetch(`${apiBase}/cras/relatorios/serie?${qs.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      setSerie(await r.json());
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao carregar série histórica.");
+      setSerie(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCruz() {
+    setErro("");
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("unidade_id", String(unidadeId));
+      qs.set("meses", String(mesesSerie));
+      const r = await apiFetch(`${apiBase}/cras/relatorios/cruzamentos?${qs.toString()}`);
+      if (!r.ok) throw new Error(await r.text());
+      setCruz(await r.json());
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao carregar cruzamentos.");
+      setCruz(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // sempre mantém consolidado atualizado
+    loadOverview();
+    // eslint-disable-next-line
+  }, [unidadeId, mesAno, diasCadunico, limiteEvasao, presMin]);
+
+  useEffect(() => {
+    if (tab === "serie") loadSerie();
+    if (tab === "cruzamentos") loadCruz();
+    // eslint-disable-next-line
+  }, [tab]);
+
+  function gotoFichaPessoa(pessoaId, highlight) {
+    if (!pessoaId) return;
+    try {
+      localStorage.setItem("cras_ficha_pessoa_id", String(pessoaId));
+      localStorage.setItem("cras_ficha_tab", "pendencias");
+      if (highlight) localStorage.setItem("cras_ficha_highlight", highlight);
+    } catch {}
+    onNavigate?.("ficha");
+  }
+
+  function gotoScfvTurma(turmaId) {
+    onNavigate?.("scfv", {
+      turmaId: turmaId || null,
+      mes: mesAno,
+      limite: Number(limiteEvasao || 3),
+      presMin: Number(presMin || 75),
+      auto: true,
+      scrollRel: true,
+    });
+  }
+
+  const cards = useMemo(() => {
+    if (!overview) return [];
+    return [
+      { label: "PIA faltando", value: overview.pia_faltando_total },
+      { label: "CadÚnico atrasado", value: overview.cadunico_atrasado_total },
+      { label: "SCFV evasão", value: overview.scfv_evasao_total },
+      { label: "SCFV baixa presença", value: overview.scfv_baixa_total },
+      { label: "SCFV sem registro", value: overview.scfv_sem_reg_total },
+    ];
+  }, [overview]);
+
+  
+const overviewKpis = useMemo(() => {
+  return (cards || []).map((c) => ({ indicador: c.label, valor: c.value }));
+}, [cards]);
+
+const serieRows = useMemo(() => {
+  if (Array.isArray(serie)) return serie;
+  return Array.isArray(serie?.rows) ? serie.rows : [];
+}, [serie]);
+
+const cruzRows = useMemo(() => {
+  if (Array.isArray(cruz)) return cruz;
+  return Array.isArray(cruz?.rows) ? cruz.rows : (Array.isArray(cruz?.items) ? cruz.items : []);
+}, [cruz]);
+  // --- RELATORIOS_VIEW_SWITCH_V1 ---
+  if (viewKey === "metas") {
+  // RMA_PRONTUARIO_EXPORT_V2
+  async function _downloadBlob(name, resp) {
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadRmaCsv() {
+    try {
+      const mesVar = (typeof mesAno !== "undefined") ? mesAno : "";
+      const unidadeVar = (typeof unidadeId !== "undefined") ? unidadeId : "";
+      const mes = String(mesVar || "").trim() || prompt("Mês do RMA (YYYY-MM):", new Date().toISOString().slice(0,7));
+      if (!mes) return;
+      const unidade = String(unidadeVar || "").trim();
+      const qs = new URLSearchParams();
+      qs.set("mes", mes);
+      if (unidade) qs.set("unidade_id", unidade);
+      const url = `${apiBase}/cras/rma/export.csv?${qs.toString()}`;
+      const r = await apiFetch(url);
+      if (!r.ok) throw new Error(await r.text());
+      await _downloadBlob(`rma_${mes}${unidade ? `_unidade_${unidade}` : ""}.csv`, r);
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível baixar o RMA. Verifique se o backend está atualizado.");
+    }
+  }
+
+  async function downloadProntuarioPessoaCsv() {
+    const pid = prompt("ID da Pessoa (PessoaSUAS) para exportar prontuário:");
+    if (!pid) return;
+    try {
+      const url = `${apiBase}/cras/prontuario/export.csv?pessoa_id=${encodeURIComponent(String(pid))}&include_suas=1`;
+      const r = await apiFetch(url);
+      if (!r.ok) throw new Error(await r.text());
+      await _downloadBlob(`prontuario_pessoa_${pid}.csv`, r);
+    } catch (e) {
+      console.error(e);
+      alert("Falha ao exportar prontuário da pessoa.");
+    }
+  }
+
+  async function downloadProntuarioFamiliaCsv() {
+    const fid = prompt("ID da Família (FamiliaSUAS) para exportar prontuário:");
+    if (!fid) return;
+    try {
+      const url = `${apiBase}/cras/prontuario/export.csv?familia_id=${encodeURIComponent(String(fid))}&include_suas=1`;
+      const r = await apiFetch(url);
+      if (!r.ok) throw new Error(await r.text());
+      await _downloadBlob(`prontuario_familia_${fid}.csv`, r);
+    } catch (e) {
+      console.error(e);
+      alert("Falha ao exportar prontuário da família.");
+    }
+  }
+
+    return (
+      <div className="layout-1col">
+        <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+          <div style={{ fontWeight: 950, fontSize: 18 }}>Metas</div>
+          <div className="texto-suave" style={{ marginTop: 6 }}>
+            Aqui você define metas simples (ex.: reduzir vencidas, aumentar acompanhamento concluído) e acompanha semanalmente.
+          </div>
+          <div className="texto-suave" style={{ marginTop: 10 }}>
+            (Em breve) Configuração de metas por unidade e indicador.
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            <button className="btn btn-primario" type="button" onClick={() => onSetView("painel")}>Voltar ao Painel</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (viewKey === "exportar") {
+    function toCsv(rows) {
+      if (!Array.isArray(rows) || !rows.length) return "";
+      const keys = Object.keys(rows[0] || {});
+      const esc = (v) => {
+        const s = String(v ?? "");
+        if (s.includes('"') || s.includes(",") || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+      const head = keys.map(esc).join(",");
+      const body = rows.map((r) => keys.map((k) => esc(r[k])).join(",")).join("\n");
+      return head + "\n" + body + "\n";
+    }
+
+    function downloadCsv(name, rows) {
+      const csv = toCsv(rows);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    return (
+      <div className="layout-1col">
+        <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 950, fontSize: 18 }}>Exportar</div>
+              <div className="texto-suave">Baixe CSV para planilha, apresentação e prestação de contas.</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn btn-secundario" type="button" onClick={() => { loadOverview(); loadSerie(); loadCruz(); }}>
+                Atualizar dados
+              </button>
+              <button className="btn btn-primario" type="button" onClick={() => onSetView("painel")}>
+                Ir ao Painel
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            
+            <button className="btn btn-secundario" type="button" onClick={downloadRmaCsv}>
+              RMA (CSV do mês)
+            </button>
+            <button className="btn btn-secundario" type="button" onClick={downloadProntuarioPessoaCsv}>
+              Prontuário Pessoa (CSV)
+            </button>
+            <button className="btn btn-secundario" type="button" onClick={downloadProntuarioFamiliaCsv}>
+              Prontuário Família (CSV)
+            </button>
+<button className="btn btn-secundario" type="button" onClick={() => downloadCsv("relatorio_overview.csv", (overviewKpis || []))}>
+              CSV (Painel)
+            </button>
+
+            <button className="btn btn-secundario" type="button" onClick={() => downloadCsv("relatorio_serie.csv", (serieRows || []))}>
+              CSV (Série)
+            </button>
+
+            <button className="btn btn-secundario" type="button" onClick={() => downloadCsv("relatorio_cruzamentos.csv", (cruzRows || []))}>
+              CSV (Cruzamentos)
+            </button>
+          </div>
+
+          <div className="texto-suave" style={{ marginTop: 10 }}>
+            Dica: se algum CSV vier vazio, clique em “Atualizar dados” e tente novamente.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="layout-1col">
+      <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Relatórios — Gestão e gargalos</div>
+            <div className="texto-suave">Consolidado, série histórica e cruzamentos.</div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="btn btn-secundario" type="button" onClick={() => {
+              if (tab === "consolidado") loadOverview();
+              if (tab === "serie") loadSerie();
+              if (tab === "cruzamentos") loadCruz();
+            }}>Atualizar</button>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+          <div className="texto-suave">Unidade ativa: <strong>{unidadeId}</strong></div>
+          <label className="texto-suave">Mês:</label>
+          <input type="month" className="input" value={mesAno} onChange={(e) => setMesAno(e.target.value)} />
+
+          <label className="texto-suave">CadÚnico atraso (dias):</label>
+          <input type="number" className="input" value={diasCadunico} min={1} max={365} onChange={(e) => setDiasCadunico(e.target.value)} style={{ width: 120 }} />
+
+          <label className="texto-suave">Evasão (faltas seguidas):</label>
+          <input type="number" className="input" value={limiteEvasao} min={1} max={60} onChange={(e) => setLimiteEvasao(e.target.value)} style={{ width: 120 }} />
+
+          <label className="texto-suave">Presença mínima (%):</label>
+          <input type="number" className="input" value={presMin} min={0} max={100} onChange={(e) => setPresMin(e.target.value)} style={{ width: 120 }} />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+          <button className={"btn btn-secundario btn-secundario-mini" + (tab === "consolidado" ? " btn-primario" : "")} type="button" onClick={() => setTab("consolidado")}>Consolidado</button>
+          <button className={"btn btn-secundario btn-secundario-mini" + (tab === "serie" ? " btn-primario" : "")} type="button" onClick={() => setTab("serie")}>Série histórica</button>
+          <button className={"btn btn-secundario btn-secundario-mini" + (tab === "cruzamentos" ? " btn-primario" : "")} type="button" onClick={() => setTab("cruzamentos")}>Cruzamentos</button>
+        </div>
+
+        {erro ? <div className="card" style={{ padding: 12, borderRadius: 14, marginTop: 12 }}><strong>{erro}</strong></div> : null}
+        {loading ? <div className="texto-suave" style={{ marginTop: 12 }}>Carregando…</div> : null}
+      </div>
+
+      {tab === "consolidado" ? (
+        overview ? (
+          <>
+            <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
+                {cards.map((c) => (
+                  <div key={c.label} className="card" style={{ padding: 12, borderRadius: 16 }}>
+                    <div className="texto-suave" style={{ fontWeight: 900 }}>{c.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 950 }}>{c.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginTop: 16, alignItems: "center" }}>
+                <div style={{ fontWeight: 900 }}>Top pendências</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => downloadCSV(`cras_pendencias_${mesAno}.csv`, overview.top_pendencias || [])}>CSV</button>
+                  <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => {
+                    const rows = (overview.top_pendencias || []).map((x) => `<tr><td>${x.tipo}</td><td><b>${x.total}</b></td></tr>`).join("");
+                    printHtml("Pendências", `<h1>Pendências — ${mesAno}</h1><div class='muted'>Unidade ${unidadeId}</div><table><thead><tr><th>Tipo</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>`);
+                  }}>Imprimir</button>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 8, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>Tipo</th>
+                      <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview.top_pendencias || []).map((x, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.tipo}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>{x.total}</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 16, fontWeight: 900 }}>SCFV — Top turmas</div>
+              <div style={{ marginTop: 8, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {[
+                        "Turma",
+                        "Evasão",
+                        "Baixa",
+                        "Sem registro",
+                        "Encontros",
+                        "Ação",
+                      ].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview.scfv_top_turmas || []).map((x) => (
+                      <tr key={x.turma_id}>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>#{x.turma_id}</strong> · {x.turma_nome}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.evasao}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.baixa_presenca}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.sem_registro}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.encontros}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>
+                          <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => gotoScfvTurma(x.turma_id)}>
+                            Abrir SCFV
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!(overview.scfv_top_turmas || []).length ? (
+                      <tr><td colSpan={6} className="texto-suave" style={{ padding: 10 }}>Sem turmas no recorte.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 18, fontWeight: 900 }}>PIA faltando (top)</div>
+              <div style={{ marginTop: 8, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {[
+                        "Caso",
+                        "Pessoa",
+                        "Território",
+                        "Ações",
+                      ].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview.pia_faltando_rows || []).map((r) => (
+                      <tr key={r.caso_id}>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>#{r.caso_id}</strong> · {r.etapa}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.nome || "—"}<div className="texto-suave">CPF: {r.cpf || "—"} · NIS: {r.nis || "—"}</div></td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.territorio || r.bairro || "—"}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {r.pessoa_id ? (
+                              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => gotoFichaPessoa(r.pessoa_id, "pia_inexistente")}>
+                                Abrir ficha
+                              </button>
+                            ) : null}
+                            <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => onNavigate?.("casos")}>
+                              Abrir casos
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!(overview.pia_faltando_rows || []).length ? (
+                      <tr><td colSpan={4} className="texto-suave" style={{ padding: 10 }}>Sem casos no recorte.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 18, fontWeight: 900 }}>CadÚnico atrasado (top)</div>
+              <div style={{ marginTop: 8, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {[
+                        "Pré-cadastro",
+                        "Pessoa",
+                        "Status",
+                        "Ações",
+                      ].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview.cadunico_atrasado_rows || []).map((r) => (
+                      <tr key={r.precadastro_id}>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>#{r.precadastro_id}</strong></td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.nome || "—"}<div className="texto-suave">CPF: {r.cpf || "—"} · NIS: {r.nis || "—"}</div></td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.status}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {r.pessoa_id ? (
+                              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => gotoFichaPessoa(r.pessoa_id, "cadunico_atrasado")}>
+                                Abrir ficha
+                              </button>
+                            ) : null}
+                            <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => onNavigate?.("cadunico")}>
+                              Abrir CadÚnico
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!(overview.cadunico_atrasado_rows || []).length ? (
+                      <tr><td colSpan={4} className="texto-suave" style={{ padding: 10 }}>Sem pré-cadastros no recorte.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ) : null
+      ) : null}
+
+      {tab === "serie" ? (
+        <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Série histórica</div>
+              <div className="texto-suave">Mensal (últimos {mesesSerie} meses) — casos, PIA, CadÚnico, tarefas e SCFV.</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <label className="texto-suave">Meses:</label>
+              <select className="input" value={mesesSerie} onChange={(e) => setMesesSerie(e.target.value)}>
+                {[6, 12, 18, 24, 36].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <button className="btn btn-secundario" type="button" onClick={loadSerie}>Recarregar</button>
+              <button className="btn btn-secundario" type="button" onClick={() => downloadCSV(`cras_serie_${mesesSerie}m.csv`, serie?.rows || [])}>CSV</button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {[
+                    "Mês",
+                    "Casos novos",
+                    "Casos encerrados",
+                    "Casos abertos (fim)",
+                    "PIA faltando (fim)",
+                    "CadÚnico abertos (fim)",
+                    "CadÚnico atrasados (fim)",
+                    "Tarefas criadas",
+                    "Tarefas abertas (fim)",
+                    "Tarefas vencidas (fim)",
+                    "SCFV registros",
+                  ].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(serie?.rows || []).map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>{r.label}</strong></td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.casos_novos}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.casos_encerrados}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.casos_abertos_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.pia_faltando_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.cadunico_abertos_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.cadunico_atrasados_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.tarefas_criadas}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.tarefas_abertas_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.tarefas_vencidas_fim}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{r.scfv_registros_presenca}</td>
+                  </tr>
+                ))}
+                {!(serie?.rows || []).length ? (
+                  <tr><td colSpan={11} className="texto-suave" style={{ padding: 10 }}>Sem dados no recorte.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "cruzamentos" ? (
+        <div className="card" style={{ padding: 14, borderRadius: 18, marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Cruzamentos (pessoas em múltiplos serviços)</div>
+              <div className="texto-suave">Recorte dos últimos {mesesSerie} meses.</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <label className="texto-suave">Meses:</label>
+              <select className="input" value={mesesSerie} onChange={(e) => setMesesSerie(e.target.value)}>
+                {[6, 12, 18, 24, 36].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <button className="btn btn-secundario" type="button" onClick={loadCruz}>Recarregar</button>
+              <button className="btn btn-secundario" type="button" onClick={() => downloadCSV(`cras_cruzamentos_${mesesSerie}m.csv`, cruz ? [
+                { indicador: "pessoas_em_casos", valor: cruz?.totais?.pessoas_em_casos },
+                { indicador: "pessoas_em_cadunico", valor: cruz?.totais?.pessoas_em_cadunico },
+                { indicador: "pessoas_em_scfv", valor: cruz?.totais?.pessoas_em_scfv },
+                { indicador: "casos_e_cadunico", valor: cruz?.cruzamentos?.casos_e_cadunico },
+                { indicador: "casos_e_scfv", valor: cruz?.cruzamentos?.casos_e_scfv },
+                { indicador: "cadunico_e_scfv", valor: cruz?.cruzamentos?.cadunico_e_scfv },
+                { indicador: "casos_cadunico_scfv", valor: cruz?.cruzamentos?.casos_cadunico_scfv },
+              ] : [])}>CSV</button>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 12 }}>
+            <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+              <div className="texto-suave" style={{ fontWeight: 900 }}>Pessoas em Casos</div>
+              <div style={{ fontSize: 22, fontWeight: 950 }}>{cruz?.totais?.pessoas_em_casos ?? "—"}</div>
+            </div>
+            <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+              <div className="texto-suave" style={{ fontWeight: 900 }}>Pessoas em CadÚnico</div>
+              <div style={{ fontSize: 22, fontWeight: 950 }}>{cruz?.totais?.pessoas_em_cadunico ?? "—"}</div>
+            </div>
+            <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+              <div className="texto-suave" style={{ fontWeight: 900 }}>Pessoas em SCFV</div>
+              <div style={{ fontSize: 22, fontWeight: 950 }}>{cruz?.totais?.pessoas_em_scfv ?? "—"}</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16, fontWeight: 900 }}>Interseções</div>
+          <div style={{ marginTop: 8, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {[
+                    "Cruzamento",
+                    "Total",
+                  ].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { k: "Casos ∩ CadÚnico", v: cruz?.cruzamentos?.casos_e_cadunico },
+                  { k: "Casos ∩ SCFV", v: cruz?.cruzamentos?.casos_e_scfv },
+                  { k: "CadÚnico ∩ SCFV", v: cruz?.cruzamentos?.cadunico_e_scfv },
+                  { k: "Casos ∩ CadÚnico ∩ SCFV", v: cruz?.cruzamentos?.casos_cadunico_scfv },
+                ].map((x) => (
+                  <tr key={x.k}>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{x.k}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>{x.v ?? "—"}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

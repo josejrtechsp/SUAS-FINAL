@@ -1,0 +1,329 @@
+import React, { useEffect, useMemo, useState } from "react";
+import TelaCras from "./TelaCras.jsx";
+import TelaCrasEncaminhamentos from "./TelaCrasEncaminhamentos.jsx";
+import { API_BASE } from "./config.js";
+
+export default function CrasApp({ usuarioLogado, onLogout }) {
+  const [activeTab, setActiveTab] = useState("inicio");
+
+  
+
+  // === CRAS_HOME_KPIS_V1 ===
+  const [kpis, setKpis] = useState({ tri_total: 0, tri_abertas: 0, paif_ativos: 0, sem_devolutiva: 0 });
+  const [kpisLoading, setKpisLoading] = useState(false);
+
+  const hojeISO = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+const token = useMemo(() => {
+    return (
+      localStorage.getItem("poprua_token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  }, []);
+
+  async function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (!headers.get("Content-Type") && options.body) {
+      headers.set("Content-Type", "application/json");
+    }
+
+  async function loadHomeKpis() {
+    try {
+      setKpisLoading(true);
+
+      const mun = (localStorage.getItem("cras_municipio_ativo") || "").trim();
+      const un = (localStorage.getItem("cras_unidade_ativa") || "").trim();
+
+      // Triagens hoje (por unidade)
+      let tri_total = 0;
+      let tri_abertas = 0;
+      if (un) {
+        const q = new URLSearchParams();
+        q.set("data", hojeISO());
+        q.set("unidade_id", un);
+        // municipio_id é opcional; se backend aceitar, usamos, senão ignora pelo usuário
+        if (mun) q.set("municipio_id", mun);
+
+        const rTri = await apiFetch(`${API_BASE}/cras/triagens/resumo?${q.toString()}`);
+        if (rTri.ok) {
+          const j = await rTri.json();
+          tri_total = Number(j.total || 0);
+          tri_abertas = Number(j.abertas || 0);
+        }
+      }
+
+      // PAIF ativos (município do usuário)
+      let paif_ativos = 0;
+      {
+        const q2 = new URLSearchParams();
+        q2.set("status", "ativo");
+        if (mun) q2.set("municipio_id", mun); // se backend não aceitar, ele só ignora (ou retorna 422; pegamos no catch)
+        const rPaif = await apiFetch(`${API_BASE}/cras/paif?${q2.toString()}`);
+        if (rPaif.ok) {
+          const arr = await rPaif.json();
+          paif_ativos = Array.isArray(arr) ? arr.length : 0;
+        }
+      }
+
+      // Sem devolutiva (por unidade)
+      let sem_devolutiva = 0;
+      if (un) {
+        const q3 = new URLSearchParams();
+        q3.set("dias", "7");
+        q3.set("unidade_id", un);
+        if (mun) q3.set("municipio_id", mun);
+
+        const rEnc = await apiFetch(`${API_BASE}/cras/encaminhamentos/sem-devolutiva?${q3.toString()}`);
+        if (rEnc.ok) {
+          const arr = await rEnc.json();
+          sem_devolutiva = Array.isArray(arr) ? arr.length : 0;
+        }
+      }
+
+      setKpis({ tri_total, tri_abertas, paif_ativos, sem_devolutiva });
+    } catch (e) {
+      // Nunca derruba a tela
+      setKpis((prev) => ({ ...prev }));
+    } finally {
+      setKpisLoading(false);
+    }
+  }
+    if (token && !headers.get("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    return fetch(url, { ...options, headers });
+  }
+
+  const perfil = (usuarioLogado?.perfil || "").toLowerCase();
+  const podeTrocarMunicipio = ["admin", "gestor_consorcio"].includes(perfil);
+
+  const [municipios, setMunicipios] = useState([]);
+  const [municipioAtivoId, setMunicipioAtivoId] = useState(() => {
+    const saved = localStorage.getItem("cras_municipio_ativo");
+    if (saved) return saved;
+    return usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "";
+  });
+
+  const [unidades, setUnidades] = useState([]);
+  const [unidadeAtivaId, setUnidadeAtivaId] = useState(() => {
+    return localStorage.getItem("cras_unidade_ativa") || "";
+  });
+
+  const municipioAtivoNome = useMemo(() => {
+    const id = Number(municipioAtivoId || 0);
+    const m = municipios.find((x) => Number(x.id) === id);
+    return m?.nome || (usuarioLogado?.municipio_nome || "");
+  }, [municipios, municipioAtivoId, usuarioLogado]);
+
+  async function loadMunicipios() {
+    const r = await apiFetch(`${API_BASE}/municipios/`);
+    if (r.ok) {
+      const data = await r.json();
+      setMunicipios(data);
+      if (!municipioAtivoId && usuarioLogado?.municipio_id) {
+        setMunicipioAtivoId(String(usuarioLogado.municipio_id));
+      }
+    }
+  }
+
+  async function loadUnidades(munId) {
+    const q = new URLSearchParams();
+    if (munId) q.set("municipio_id", String(munId));
+    const r = await apiFetch(`${API_BASE}/cras/unidades?${q.toString()}`);
+    if (r.ok) {
+      const data = await r.json();
+      setUnidades(data);
+
+      const saved = localStorage.getItem("cras_unidade_ativa");
+      const ok = saved && data.some((u) => String(u.id) === String(saved));
+      const next = ok ? saved : (data[0]?.id ? String(data[0].id) : "");
+      setUnidadeAtivaId(next);
+      if (next) localStorage.setItem("cras_unidade_ativa", next);
+    }
+  }
+
+  useEffect(() => {
+    loadMunicipios();
+    loadHomeKpis();
+    // eslint-disable-next-line
+  }, []);
+
+  useEffect(() => {
+    const mun = municipioAtivoId || (usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "");
+    if (mun) {
+      localStorage.setItem("cras_municipio_ativo", mun);
+      loadUnidades(mun);
+      loadHomeKpis();
+    }
+    // eslint-disable-next-line
+  }, [municipioAtivoId]);
+
+  function onChangeMunicipio(v) {
+    setMunicipioAtivoId(v);
+    localStorage.setItem("cras_municipio_ativo", v);
+  }
+
+  function onChangeUnidade(v) {
+    setUnidadeAtivaId(v);
+    localStorage.setItem("cras_unidade_ativa", v);
+    loadHomeKpis();
+  }
+
+  return (
+    <div className="app-root">
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="app-header-title">
+            <div className="app-title-tag">Plataforma de Assistência Social</div>
+
+            <h1 className="app-title">
+              <span className="app-title-prefix">Sistema</span>
+              <span className="app-title-highlight">CRAS</span>
+            </h1>
+
+            <p className="app-subtitle">Triagem, PAIF e rede com LGPD aplicada</p>
+          </div>
+
+          {usuarioLogado && (
+            <div className="header-user-row">
+              <div className="header-user-top">
+                <span className="header-user-nome">{usuarioLogado.nome}</span>
+
+                <span className="header-user-perfil">
+                  {usuarioLogado?.perfil === "operador"
+                    ? "Operador municipal"
+                    : usuarioLogado?.perfil === "coord_municipal"
+                    ? "Coord. municipal"
+                    : usuarioLogado?.perfil === "gestor_consorcio"
+                    ? "Gestor do consórcio"
+                    : usuarioLogado?.perfil === "admin"
+                    ? "Admin do sistema"
+                    : usuarioLogado?.perfil || ""}
+                </span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="texto-suave">Município ativo:</span>
+
+                  {podeTrocarMunicipio ? (
+                    <select className="input" value={municipioAtivoId} onChange={(e) => onChangeMunicipio(e.target.value)} style={{ width: 220 }}>
+                      {municipios.map((m) => (
+                        <option key={m.id} value={m.id}>{m.nome}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ fontWeight: 900 }}>{municipioAtivoNome || "—"}</span>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="texto-suave">Unidade CRAS:</span>
+                  <select className="input" value={unidadeAtivaId} onChange={(e) => onChangeUnidade(e.target.value)} style={{ width: 200 }}>
+                    {unidades.map((u) => (
+                      <option key={u.id} value={u.id}>{u.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={() => (window.location.href = "/")}>
+                  Portal
+                </button>
+
+                {typeof onLogout === "function" && (
+                  <button type="button" className="btn btn-secundario btn-secundario-mini btn-logout" onClick={onLogout}>
+                    Sair
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <nav className="app-tabs" aria-label="Navegação CRAS">
+            <button type="button" className={"app-tab" + (activeTab === "inicio" ? " app-tab-active" : "")} onClick={() => setActiveTab("inicio")}>
+              Início CRAS
+            </button>
+
+            <button type="button" className={"app-tab" + (activeTab === "paif" ? " app-tab-active" : "")} onClick={() => setActiveTab("paif")}>
+              Triagem + PAIF
+            </button>
+
+            <button type="button" className={"app-tab" + (activeTab === "encaminhamentos" ? " app-tab-active" : "")} onClick={() => setActiveTab("encaminhamentos")}>
+              Encaminhamentos
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <main className="app-main">
+        {activeTab === "inicio" && (
+          <div className="layout-1col">
+            <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+              <h2 style={{ margin: 0 }}>Bem-vindo ao Módulo CRAS</h2>
+              <p style={{ marginTop: 8 }} className="texto-suave">
+                Este módulo é a “mesa de operação” do CRAS: fila de triagem, PAIF por etapas, pendências e devolutivas.
+              </p>
+
+              {/* KPIs – mesa de operação (Home CRAS) */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 12 }}>
+                <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>Triagens hoje</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>
+                    {kpisLoading ? "…" : kpis.tri_total}
+                  </div>
+                  <div className="texto-suave">Abertas: {kpisLoading ? "…" : kpis.tri_abertas}</div>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>PAIF ativos</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>
+                    {kpisLoading ? "…" : kpis.paif_ativos}
+                  </div>
+                  <div className="texto-suave">município</div>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(245,158,11,.28)", background: "rgba(255,247,237,.72)" }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>Sem devolutiva</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>
+                    {kpisLoading ? "…" : kpis.sem_devolutiva}
+                  </div>
+                  <div className="texto-suave">7+ dias</div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-secundario" type="button" onClick={loadHomeKpis}>
+                  Atualizar KPIs
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-primario" type="button" onClick={() => setActiveTab("paif")}>
+                  Abrir Triagem + PAIF
+                </button>
+                <button className="btn btn-secundario" type="button" onClick={() => setActiveTab("encaminhamentos")}>
+                  Abrir Encaminhamentos
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "paif" && (
+          <TelaCras apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+        )}
+
+        {activeTab === "encaminhamentos" && (
+          <TelaCrasEncaminhamentos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+        )}
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,130 @@
+import React, { useMemo, useState } from "react";
+import "./SuasHub.css";
+
+const MODS = [
+  { id: "poprua", name: "Pop Rua", desc: "Atendimento e gestão de caso", status: "ativo", group: "Ativos" },
+  { id: "cras", name: "CRAS", desc: "Proteção Social Básica", status: "ativo", group: "Ativos" },
+  { id: "creas", name: "CREAS", desc: "Proteção Social Especial (PAEFI)", status: "ativo", group: "Ativos" },
+
+  { id: "ouvidoria", name: "Ouvidoria", desc: "Demandas do cidadão com SLA e mapa", status: "breve", group: "Em breve" },
+  { id: "projetos", name: "Projetos & Captação", desc: "Emendas, convênios e execução por etapa", status: "breve", group: "Em breve" },
+  { id: "terceiro_setor", name: "Terceiro Setor", desc: "OSCs, parcerias e prestação de contas", status: "breve", group: "Em breve" },
+  { id: "centropop", name: "Centro POP", desc: "Rotinas e serviços do Centro POP", status: "breve", group: "Em breve" },
+  { id: "gestao", name: "Gestão", desc: "Relatórios, coordenação e governança", status: "breve", group: "Em breve" },
+];
+
+export default function SuasHubPage() {
+  const [nav, setNav] = useState("Hub");
+
+  const groups = useMemo(() => {
+    const map = {};
+    for (const m of MODS) {
+      map[m.group] = map[m.group] || [];
+      map[m.group].push(m);
+    }
+    return map;
+  }, []);
+
+  const goHome = () => {
+    const u = new URL(window.location.href);
+    u.searchParams.delete("mod");
+    u.searchParams.delete("hub");
+    u.searchParams.delete("artigo");
+    window.location.href = u.pathname + u.search;
+  };
+
+  // ✅ Entrar SEM depender de /app:
+  const entrar = (id) => {
+    const u = new URL(window.location.href);
+    u.searchParams.set("mod", id);
+    window.location.href = u.pathname + "?" + u.searchParams.toString();
+  };
+
+  return (
+    <div className="hubtv-root">
+      <aside className="hubtv-sidebar">
+        <div className="hubtv-brand">
+          <img className="hubtv-logo" src="/ideal-logo.png" alt="IDEAL" />
+        </div>
+
+        <div className="hubtv-nav">
+          <div className={"hubtv-navItem " + (nav === "Hub" ? "hubtv-navItemActive" : "")} onClick={() => setNav("Hub")}>
+            🧩 Hub de módulos
+          </div>
+          <div className={"hubtv-navItem " + (nav === "Ativos" ? "hubtv-navItemActive" : "")} onClick={() => setNav("Ativos")}>
+            ✅ Ativos
+          </div>
+          <div className={"hubtv-navItem " + (nav === "Em breve" ? "hubtv-navItemActive" : "")} onClick={() => setNav("Em breve")}>
+            ⏳ Em breve
+          </div>
+        </div>
+
+        <div className="hubtv-user">
+          <div><strong>IDEAL</strong> · Hub</div>
+          <div style={{ marginTop: 8 }}>Selecione um módulo para entrar.</div>
+        </div>
+      </aside>
+
+      <main className="hubtv-main">
+        <div className="hubtv-topbar">
+          <div>
+            <div className="hubtv-title">Escolha o módulo</div>
+            <div className="hubtv-subtitle">Ativos: Pop Rua, CRAS e CREAS.</div>
+          </div>
+
+          <div className="hubtv-actions">
+            <button className="hubtv-btn" onClick={goHome}>← Voltar</button>
+            <button className="hubtv-btn hubtv-btnPrimary" onClick={() => entrar("poprua")}>Entrar no sistema</button>
+          </div>
+        </div>
+
+        {(nav === "Hub" || nav === "Ativos") && (
+          <div className="hubtv-row">
+            <div className="hubtv-rowHeader">
+              <div className="hubtv-rowTitle">Ativos</div>
+              <div className="hubtv-rowHint">Clique para entrar</div>
+            </div>
+            <div className="hubtv-shelf">
+              {groups["Ativos"].map((m) => (
+                <div className="hubtv-card" key={m.id} onClick={() => entrar(m.id)}>
+                  <div className="hubtv-cardTop">
+                    <div className="hubtv-cardName">{m.name}</div>
+                    <span className="hubtv-pill hubtv-pillActive">ATIVO</span>
+                  </div>
+                  <div className="hubtv-cardDesc">{m.desc}</div>
+                  <div className="hubtv-cardBtns">
+                    <button className="hubtv-cardBtn hubtv-cardBtnPrimary" type="button">Entrar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(nav === "Hub" || nav === "Em breve") && (
+          <div className="hubtv-row">
+            <div className="hubtv-rowHeader">
+              <div className="hubtv-rowTitle">Em breve</div>
+              <div className="hubtv-rowHint">Roadmap</div>
+            </div>
+            <div className="hubtv-shelf">
+              {groups["Em breve"].map((m) => (
+                <div className="hubtv-card hubtv-cardDisabled" key={m.id}>
+                  <div className="hubtv-cardTop">
+                    <div className="hubtv-cardName">{m.name}</div>
+                    <span className="hubtv-pill hubtv-pillSoon">EM BREVE</span>
+                  </div>
+                  <div className="hubtv-cardDesc">{m.desc}</div>
+                  <div className="hubtv-cardBtns">
+                    <button className="hubtv-cardBtn" type="button" disabled>Em breve</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+}

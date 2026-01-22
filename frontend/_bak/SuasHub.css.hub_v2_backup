@@ -1,0 +1,207 @@
+/* HUB SUAS (antes do login) — claro, tecnológico e com orbit responsivo */
+
+.suas-hub-root{
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 460px at 18% 18%, rgba(124,58,237,.16), transparent 62%),
+    radial-gradient(900px 460px at 84% 18%, rgba(56,189,248,.18), transparent 62%),
+    radial-gradient(900px 520px at 50% 94%, rgba(236,72,153,.10), transparent 64%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2ff 46%, #f8fafc 100%);
+  color: #0f172a;
+  display:flex;
+  flex-direction:column;
+}
+
+.suas-hub-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 14px;
+  padding: 18px 18px 6px;
+}
+
+.suas-hub-back{
+  border: 1px solid rgba(15,23,42,.12);
+  background: rgba(255,255,255,.72);
+  color:#0f172a;
+  padding: 10px 12px;
+  border-radius: 14px;
+  cursor:pointer;
+  box-shadow: 0 12px 32px rgba(15,23,42,.10);
+  backdrop-filter: blur(10px);
+}
+.suas-hub-back:hover{ background: rgba(255,255,255,.82); }
+
+.suas-hub-brand{ max-width: 740px; }
+.suas-hub-kicker{
+  font-weight: 900;
+  letter-spacing: .14em;
+  font-size: 11px;
+  color: rgba(15,23,42,.65);
+}
+.suas-hub-title{
+  font-size: 34px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+  margin-top: 6px;
+  color:#0f172a;
+}
+.suas-hub-sub{
+  margin-top: 6px;
+  color: rgba(15,23,42,.68);
+}
+
+.suas-hub-right{ width: 90px; }
+
+.suas-orbit-wrap{
+  position:relative;
+  flex: 1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.suas-orbit-grid{
+  position:absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(15,23,42,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15,23,42,.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 42%, rgba(0,0,0,1), rgba(0,0,0,0) 70%);
+  opacity: .9;
+  pointer-events:none;
+}
+
+.suas-orbit{
+  position:relative;
+  width: min(860px, 92vw, 72vh);
+  aspect-ratio: 1/1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.suas-core{
+  width: 210px;
+  height: 210px;
+  border-radius: 999px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  background: rgba(255,255,255,.72);
+  border: 1px solid rgba(15,23,42,.12);
+  box-shadow: 0 22px 70px rgba(15,23,42,.14);
+  position:relative;
+  backdrop-filter: blur(12px);
+}
+
+.suas-core-ring{
+  position:absolute;
+  inset: -14px;
+  border-radius: 999px;
+  border: 1px solid rgba(124,58,237,.34);
+  box-shadow:
+    0 0 0 8px rgba(124,58,237,.08),
+    0 0 80px rgba(56,189,248,.10);
+}
+
+.suas-core-label{
+  font-size: 42px;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+  color:#0f172a;
+}
+.suas-core-sub{
+  margin-top: 6px;
+  font-weight: 700;
+  color: rgba(15,23,42,.68);
+}
+
+.suas-sat{
+  position:absolute;
+  left: 50%;
+  top: 50%;
+  width: min(260px, 44vw);
+  padding: 12px 12px 11px;
+  border-radius: 18px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: rgba(255,255,255,.78);
+  color:#0f172a;
+  cursor:pointer;
+  text-align:left;
+  box-shadow: 0 18px 50px rgba(15,23,42,.14);
+  backdrop-filter: blur(12px);
+}
+
+.suas-sat:hover{ background: rgba(255,255,255,.88); }
+
+.suas-sat-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+}
+
+.suas-sat-label{ font-weight: 950; font-size: 15px; }
+.suas-sat-desc{
+  margin-top: 6px;
+  color: rgba(15,23,42,.70);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.suas-pill{
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 950;
+  border: 1px solid rgba(15,23,42,.12);
+  white-space: nowrap;
+}
+.suas-pill-on{ background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.26); color: #14532d; }
+.suas-pill-soon{ background: rgba(148,163,184,.18); border-color: rgba(148,163,184,.30); color: rgba(15,23,42,.75); }
+
+.suas-sat-poprua{
+  border-color: rgba(56,189,248,.40);
+  box-shadow: 0 18px 50px rgba(15,23,42,.14), 0 0 70px rgba(56,189,248,.18);
+}
+
+.suas-sat-disabled{
+  opacity: .70;
+  cursor: not-allowed;
+}
+
+.suas-orbit-lines{
+  position:absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px dashed rgba(15,23,42,.18);
+  box-shadow: 0 0 0 22px rgba(124,58,237,.05);
+  pointer-events:none;
+}
+
+.suas-toast{
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  background: rgba(15,23,42,.92);
+  border: 1px solid rgba(255,255,255,.14);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  z-index: 9999;
+}
+
+@media (max-width: 720px){
+  .suas-hub-title{ font-size: 28px; }
+  .suas-core{ width: 170px; height: 170px; }
+  .suas-core-label{ font-size: 36px; }
+  .suas-orbit{ width: min(720px, 92vw, 70vh); }
+  .suas-sat{ width: min(240px, 78vw); }
+}

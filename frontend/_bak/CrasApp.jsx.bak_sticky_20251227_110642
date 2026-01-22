@@ -1,0 +1,229 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { API_BASE } from "./config.js";
+
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import CrasPageHeader from "./components/CrasPageHeader.jsx";
+
+import TelaCrasInicioDashboard from "./TelaCrasInicioDashboard.jsx";
+import TelaCras from "./TelaCras.jsx";
+import TelaCrasCadUnico from "./TelaCrasCadUnico.jsx";
+import TelaCrasEncaminhamentos from "./TelaCrasEncaminhamentos.jsx";
+import TelaCrasCasos from "./TelaCrasCasos.jsx";
+import TelaCrasCadastros from "./TelaCrasCadastros.jsx";
+import TelaCrasProgramas from "./TelaCrasProgramas.jsx";
+import TelaCrasScfv from "./TelaCrasScfv.jsx";
+import TelaCrasFicha from "./TelaCrasFicha.jsx";
+import TelaCrasRelatorios from "./TelaCrasRelatorios.jsx";
+
+export default function CrasApp({ usuarioLogado }) {
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem("cras_active_tab") || "inicio");
+
+  const [municipios, setMunicipios] = useState([]);
+  const [unidades, setUnidades] = useState([]);
+
+  const [municipioAtivoId, setMunicipioAtivoId] = useState(() => {
+    const saved = localStorage.getItem("cras_municipio_ativo");
+    if (saved) return saved;
+    return usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "";
+  });
+
+  const [unidadeAtivaId, setUnidadeAtivaId] = useState(() => localStorage.getItem("cras_unidade_ativa") || "");
+
+  useEffect(() => { try { localStorage.setItem("cras_active_tab", activeTab); } catch {} }, [activeTab]);
+  useEffect(() => { try { localStorage.setItem("cras_municipio_ativo", municipioAtivoId || ""); } catch {} }, [municipioAtivoId]);
+  useEffect(() => { try { localStorage.setItem("cras_unidade_ativa", unidadeAtivaId || ""); } catch {} }, [unidadeAtivaId]);
+
+  function getToken() {
+    return (
+      localStorage.getItem("poprua_token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  }
+
+  async function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    const token = getToken();
+    if (token && !headers.get("Authorization")) headers.set("Authorization", `Bearer ${token}`);
+
+    const hasBody = options.body != null;
+    const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
+    if (hasBody && !isForm && !headers.get("Content-Type")) headers.set("Content-Type", "application/json");
+
+    return fetch(url, { ...options, headers });
+  }
+
+  async function apiJson(path) {
+    const res = await apiFetch(`${API_BASE}${path}`);
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.detail || `Falha (HTTP ${res.status})`);
+    return json;
+  }
+
+  useEffect(() => {
+    (async () => {
+      try { setMunicipios(await apiJson("/municipios")); } catch { setMunicipios([]); }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!municipioAtivoId) return;
+    (async () => {
+      try { setUnidades(await apiJson(`/cras/unidades?municipio_id=${encodeURIComponent(municipioAtivoId)}`)); }
+      catch { setUnidades([]); }
+    })();
+  }, [municipioAtivoId]);
+
+  const municipioAtivoNome = useMemo(() => {
+    const id = Number(municipioAtivoId || 0);
+    const m = (municipios || []).find((x) => Number(x.id) === id);
+    return m?.nome || (usuarioLogado?.municipio_nome || "");
+  }, [municipios, municipioAtivoId, usuarioLogado]);
+
+  const unidadeAtivaNome = useMemo(() => {
+    const id = Number(unidadeAtivaId || 0);
+    const u = (unidades || []).find((x) => Number(x.id) === id);
+    return u?.nome || "";
+  }, [unidades, unidadeAtivaId]);
+
+  const TABS = useMemo(() => ([
+    { key: "inicio", label: "Início" },
+    { key: "paif", label: "Triagem+PAIF" },
+    { key: "cadunico", label: "CadÚnico" },
+    { key: "encaminhamentos", label: "Encaminhamentos" },
+    { key: "casos", label: "Casos" },
+    { key: "cadastros", label: "Cadastros" },
+    { key: "programas", label: "Programas" },
+    { key: "scfv", label: "SCFV" },
+    { key: "ficha", label: "Ficha" },
+    { key: "relatorios", label: "Relatórios" },
+  ]), []);
+
+  function sair() {
+    localStorage.removeItem("poprua_token");
+    localStorage.removeItem("poprua_usuario");
+    window.location.reload();
+  }
+
+  function portal() {
+    window.location.href = "/app";
+  }
+
+  const onNavigate = (x) => { if (x?.tab) setActiveTab(x.tab); };
+
+  return (
+    <div className="app-root">
+<main className="app-main">
+        {activeTab === "inicio" && (
+          <ErrorBoundary label="CRAS · Início">
+            <>
+              <CrasPageHeader
+                title="CRAS — Início"
+                subtitle="Painel operacional do equipamento: usuários, pendências, prazos e presença."
+                bullets={[
+                  "Pendências por SLA e ações rápidas.",
+                  "Presença/ausência (SCFV e Programas).",
+                  "Equipe e prazos (tarefas/SLA por técnico).",
+                ]}
+                rightTag="CRAS"
+                rightMetaLabel="Usuário"
+                rightMetaValue={usuarioLogado?.nome || "—"}
+              />
+              <div style={{ marginTop: 12 }}>
+                <TelaCrasInicioDashboard
+                  apiBase={API_BASE}
+                  apiFetch={apiFetch}
+                  onNavigate={onNavigate}
+                  unidadeId={unidadeAtivaId || null}
+                  municipioId={municipioAtivoId || null}
+                />
+              </div>
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "paif" && (
+          <ErrorBoundary label="CRAS · Triagem + PAIF">
+            <>
+              <CrasPageHeader title="CRAS — Triagem + PAIF" subtitle="Fila do dia e acompanhamento por etapas." bullets={["Triagem vinculada à unidade.", "Checklist e plano por etapa.", "Histórico auditável."]} />
+              <TelaCras apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "cadunico" && (
+          <ErrorBoundary label="CRAS · CadÚnico">
+            <>
+              <CrasPageHeader title="CRAS — CadÚnico" subtitle="Pré-cadastro, agendamento, finalização e rastreabilidade." bullets={["Status e histórico.", "Não compareceu e reagendamento.", "Pendências por prazo."]} />
+              <TelaCrasCadUnico apiBase={API_BASE} apiFetch={apiFetch} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "encaminhamentos" && (
+          <ErrorBoundary label="CRAS · Encaminhamentos">
+            <>
+              <CrasPageHeader title="CRAS — Encaminhamentos" subtitle="Encaminhar e controlar devolutiva." bullets={["Sem devolutiva = atraso por prazo.", "Cobrança com evidência.", "Timeline do item."]} />
+              <TelaCrasEncaminhamentos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "casos" && (
+          <ErrorBoundary label="CRAS · Casos">
+            <>
+              <CrasPageHeader title="CRAS — Casos" subtitle="Etapas, validação, SLA e auditoria." bullets={["Linha do metrô por etapa.", "Validação de recebimento.", "Alertas e histórico."]} />
+              <TelaCrasCasos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "cadastros" && (
+          <ErrorBoundary label="CRAS · Cadastros">
+            <>
+              <CrasPageHeader title="CRAS — Cadastros" subtitle="Pessoa + Família (base da rede)." bullets={["Pessoa → família → membros.", "Vínculos para casos e programas.", "Documentos e anexos."]} />
+              <TelaCrasCadastros apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "programas" && (
+          <ErrorBoundary label="CRAS · Programas">
+            <>
+              <CrasPageHeader title="CRAS — Programas e Projetos" subtitle="Cadastro, inscrições, encontros e presença." bullets={["Encontros por programa.", "Presença por encontro.", "Abrir ficha 360° do participante."]} />
+              <TelaCrasProgramas apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "scfv" && (
+          <ErrorBoundary label="CRAS · SCFV">
+            <>
+              <CrasPageHeader title="CRAS — SCFV" subtitle="Turmas, chamada, relatório mensal e evasão." bullets={["Ações: abrir ficha e registrar contato.", "Alertas por evasão.", "Exportação CSV."]} />
+              <TelaCrasScfv apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "ficha" && (
+          <ErrorBoundary label="CRAS · Ficha 360°">
+            <>
+              <CrasPageHeader title="CRAS — Ficha 360°" subtitle="Tudo do usuário em todos os serviços." bullets={["Casos, CadÚnico, SCFV, Programas.", "Pendências com contexto.", "Timeline/auditoria e anexos."]} />
+              <TelaCrasFicha apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "relatorios" && (
+          <ErrorBoundary label="CRAS · Relatórios">
+            <>
+              <CrasPageHeader title="Relatórios — Gestão e gargalos" subtitle="Consolidado com drill-down e priorização." bullets={["PIA faltando, CadÚnico atrasado, SCFV (evasão/baixa).", "Abrir ficha já em pendências.", "Visão por SLA."]} />
+              <TelaCrasRelatorios apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+      </main>
+    </div>
+  );
+}

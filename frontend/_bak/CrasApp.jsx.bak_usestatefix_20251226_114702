@@ -1,0 +1,452 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+import { API_BASE } from "./config.js";
+
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import CrasPageHeader from "./components/CrasPageHeader.jsx";
+
+import TelaCras from "./TelaCras.jsx";
+import TelaCrasEncaminhamentos from "./TelaCrasEncaminhamentos.jsx";
+import TelaCrasCadUnico from "./TelaCrasCadUnico.jsx";
+import TelaCrasCadastros from "./TelaCrasCadastros.jsx";
+import TelaCrasCasos from "./TelaCrasCasos.jsx";
+import TelaCrasProgramas from "./TelaCrasProgramas.jsx";
+import TelaCrasScfv from "./TelaCrasScfv.jsx";
+import TelaCrasFicha from "./TelaCrasFicha.jsx";
+import TelaCrasRelatorios from "./TelaCrasRelatorios.jsx";
+
+              <TelaCrasInicioDashboard apiBase={API_BASE} apiFetch={apiFetch} onNavigate={(x) => { if (x?.tab) setActiveTab(x.tab); }} />
+    const saved = localStorage.getItem("cras_municipio_ativo");
+    if (saved) return saved;
+    return usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "";
+  });
+
+  const [unidades, setUnidades] = useState([]);
+  const [unidadeAtivaId, setUnidadeAtivaId] = useState(() => localStorage.getItem("cras_unidade_ativa") || "");
+
+  const municipioAtivoNome = useMemo(() => {
+    const id = Number(municipioAtivoId || 0);
+    const m = (municipios || []).find((x) => Number(x.id) === id);
+    return m?.nome || (usuarioLogado?.municipio_nome || "");
+  }, [municipios, municipioAtivoId, usuarioLogado]);
+
+  function getToken() {
+    return (
+      localStorage.getItem("poprua_token") ||
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  }
+
+  async function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+
+    const token = getToken();
+    if (token && !headers.get("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    // seta JSON automaticamente (exceto FormData)
+    const hasBody = options.body != null;
+    const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
+    if (hasBody && !isForm && !headers.get("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    return fetch(url, { ...options, headers });
+  }
+
+  async function loadMunicipios() {
+    try {
+      const r = await apiFetch(`${API_BASE}/municipios/`);
+      if (r.ok) {
+        const data = await r.json();
+        setMunicipios(Array.isArray(data) ? data : []);
+        if (!municipioAtivoId && usuarioLogado?.municipio_id) {
+          setMunicipioAtivoId(String(usuarioLogado.municipio_id));
+        }
+      }
+    } catch {
+      setMunicipios([]);
+    }
+  }
+
+  async function loadUnidades(munId) {
+    try {
+      const q = new URLSearchParams();
+      if (munId) q.set("municipio_id", String(munId));
+      const r = await apiFetch(`${API_BASE}/cras/unidades?${q.toString()}`);
+      if (r.ok) {
+        const data = await r.json();
+        const arr = Array.isArray(data) ? data : [];
+        setUnidades(arr);
+
+        const saved = localStorage.getItem("cras_unidade_ativa");
+        const ok = saved && arr.some((u) => String(u.id) === String(saved));
+        const next = ok ? saved : (arr[0]?.id ? String(arr[0].id) : "");
+        setUnidadeAtivaId(next);
+        if (next) localStorage.setItem("cras_unidade_ativa", next);
+      }
+    } catch {
+      setUnidades([]);
+    }
+  }
+
+  const hojeISO = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const [kpis, setKpis] = useState({ tri_total: 0, tri_abertas: 0, paif_ativos: 0, sem_devolutiva: 0 });
+  const [kpisLoading, setKpisLoading] = useState(false);
+
+  async function loadHomeKpis() {
+    try {
+      setKpisLoading(true);
+
+      const mun = (localStorage.getItem("cras_municipio_ativo") || "").trim();
+      const un = (localStorage.getItem("cras_unidade_ativa") || "").trim();
+
+      let tri_total = 0;
+      let tri_abertas = 0;
+      if (un) {
+        const q = new URLSearchParams();
+        q.set("data", hojeISO());
+        q.set("unidade_id", un);
+        if (mun) q.set("municipio_id", mun);
+        const rTri = await apiFetch(`${API_BASE}/cras/triagens/resumo?${q.toString()}`);
+        if (rTri.ok) {
+          const j = await rTri.json();
+          tri_total = Number(j.total || 0);
+          tri_abertas = Number(j.abertas || 0);
+        }
+      }
+
+      let paif_ativos = 0;
+      {
+        const q2 = new URLSearchParams();
+        q2.set("status", "ativo");
+        if (mun) q2.set("municipio_id", mun);
+        const rPaif = await apiFetch(`${API_BASE}/cras/paif?${q2.toString()}`);
+        if (rPaif.ok) {
+          const arr = await rPaif.json();
+          paif_ativos = Array.isArray(arr) ? arr.length : 0;
+        }
+      }
+
+      let sem_devolutiva = 0;
+      if (un) {
+        const q3 = new URLSearchParams();
+        q3.set("dias", "7");
+        q3.set("unidade_id", un);
+        if (mun) q3.set("municipio_id", mun);
+        const rEnc = await apiFetch(`${API_BASE}/cras/encaminhamentos/sem-devolutiva?${q3.toString()}`);
+        if (rEnc.ok) {
+          const arr = await rEnc.json();
+          sem_devolutiva = Array.isArray(arr) ? arr.length : 0;
+        }
+      }
+
+      setKpis({ tri_total, tri_abertas, paif_ativos, sem_devolutiva });
+    } catch {
+      setKpis((prev) => ({ ...prev }));
+    } finally {
+      setKpisLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMunicipios();
+    loadHomeKpis();
+    // eslint-disable-next-line
+  }, []);
+
+  useEffect(() => {
+    const mun = municipioAtivoId || (usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "");
+    if (mun) {
+      localStorage.setItem("cras_municipio_ativo", mun);
+      loadUnidades(mun);
+      loadHomeKpis();
+    }
+    // eslint-disable-next-line
+  }, [municipioAtivoId]);
+
+  useEffect(() => {
+    if (unidadeAtivaId) {
+      localStorage.setItem("cras_unidade_ativa", unidadeAtivaId);
+      loadHomeKpis();
+    }
+    // eslint-disable-next-line
+  }, [unidadeAtivaId]);
+
+  function onChangeMunicipio(v) {
+    setMunicipioAtivoId(v);
+    localStorage.setItem("cras_municipio_ativo", v);
+  }
+
+  function onChangeUnidade(v) {
+    setUnidadeAtivaId(v);
+    localStorage.setItem("cras_unidade_ativa", v);
+  }
+
+  function onNavigate(tab, payload) {
+    setEncFocus("");
+    if (tab === "scfv") {
+      setScfvFocus(payload || null);
+      setActiveTab("scfv");
+      return;
+    }
+    setActiveTab(tab);
+  }
+
+  return (
+    <div className="app-root">
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="app-header-title">
+            <div className="app-title-tag">Plataforma de Assistência Social</div>
+            <h1 className="app-title">
+              <span className="app-title-prefix">Sistema</span>
+              <span className="app-title-highlight">CRAS</span>
+            </h1>
+            <p className="app-subtitle">Triagem, PAIF, SCFV, CadÚnico e rede com LGPD aplicada</p>
+          </div>
+
+          {usuarioLogado && (
+            <div className="header-user-row">
+              <div className="header-user-top">
+                <span className="header-user-nome">{usuarioLogado.nome}</span>
+                <span className="header-user-perfil">{usuarioLogado?.perfil || ""}</span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="texto-suave">Município ativo:</span>
+                  {podeTrocarMunicipio ? (
+                    <select className="input" value={municipioAtivoId} onChange={(e) => onChangeMunicipio(e.target.value)} style={{ width: 220 }}>
+                      {municipios.map((m) => (
+                        <option key={m.id} value={m.id}>{m.nome}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ fontWeight: 900 }}>{municipioAtivoNome || "—"}</span>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="texto-suave">Unidade CRAS:</span>
+                  <select className="input" value={unidadeAtivaId} onChange={(e) => onChangeUnidade(e.target.value)} style={{ width: 240 }}>
+                    {unidades.map((u) => (
+                      <option key={u.id} value={u.id}>{u.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={() => (window.location.href = "/")}>
+                  Portal
+                </button>
+
+                {typeof onLogout === "function" && (
+                  <button type="button" className="btn btn-secundario btn-secundario-mini btn-logout" onClick={onLogout}>
+                    Sair
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <nav className="app-tabs" aria-label="Navegação CRAS">
+            <button type="button" className={"app-tab" + (activeTab === "inicio" ? " app-tab-active" : "")} onClick={() => setActiveTab("inicio")}>Início</button>
+            <button type="button" className={"app-tab" + (activeTab === "paif" ? " app-tab-active" : "")} onClick={() => setActiveTab("paif")}>Triagem + PAIF</button>
+            <button type="button" className={"app-tab" + (activeTab === "cadunico" ? " app-tab-active" : "")} onClick={() => setActiveTab("cadunico")}>CadÚnico</button>
+            <button type="button" className={"app-tab" + (activeTab === "encaminhamentos" ? " app-tab-active" : "")} onClick={() => { setEncFocus(""); setActiveTab("encaminhamentos"); }}>Encaminhamentos</button>
+            <button type="button" className={"app-tab" + (activeTab === "casos" ? " app-tab-active" : "")} onClick={() => setActiveTab("casos")}>Casos</button>
+            <button type="button" className={"app-tab" + (activeTab === "cadastros" ? " app-tab-active" : "")} onClick={() => setActiveTab("cadastros")}>Cadastros</button>
+            <button type="button" className={"app-tab" + (activeTab === "programas" ? " app-tab-active" : "")} onClick={() => setActiveTab("programas")}>Programas</button>
+            <button type="button" className={"app-tab" + (activeTab === "scfv" ? " app-tab-active" : "")} onClick={() => setActiveTab("scfv")}>SCFV</button>
+            <button type="button" className={"app-tab" + (activeTab === "ficha" ? " app-tab-active" : "")} onClick={() => setActiveTab("ficha")}>Ficha</button>
+            <button type="button" className={"app-tab" + (activeTab === "relatorios" ? " app-tab-active" : "")} onClick={() => setActiveTab("relatorios")}>Relatórios</button>
+          </nav>
+        </div>
+      </header>
+
+      <main className="app-main">
+        {activeTab === "inicio" && (
+          
+              <TelaCrasInicioDashboard apiBase={API_BASE} apiFetch={apiFetch} onNavigate={(x) => { if (x?.tab) setActiveTab(x.tab); }} />
+<div className="layout-1col">
+            <div className="card" style={{ padding: 14, borderRadius: 18 }}>
+              <h2 style={{ margin: 0 }}>Bem-vindo ao Módulo CRAS</h2>
+              <p style={{ marginTop: 8 }} className="texto-suave">
+                Mesa de operação do CRAS: triagem, PAIF, CadÚnico, SCFV, rede e auditoria.
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 12 }}>
+                <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>Triagens hoje</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>{kpisLoading ? "…" : kpis.tri_total}</div>
+                  <div className="texto-suave">Abertas: {kpisLoading ? "…" : kpis.tri_abertas}</div>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 16 }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>PAIF ativos</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>{kpisLoading ? "…" : kpis.paif_ativos}</div>
+                  <div className="texto-suave">município</div>
+                </div>
+
+                <div className="card" style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(245,158,11,.28)", background: "rgba(255,247,237,.72)" }}>
+                  <div className="texto-suave" style={{ fontWeight: 900 }}>Sem devolutiva</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, marginTop: 2 }}>{kpisLoading ? "…" : kpis.sem_devolutiva}</div>
+                  <div className="texto-suave">7+ dias</div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-secundario" type="button" onClick={loadHomeKpis}>Atualizar KPIs</button>
+                <button className="btn btn-primario" type="button" onClick={() => setActiveTab("paif")}>Abrir Triagem + PAIF</button>
+                <button className="btn btn-secundario" type="button" onClick={() => setActiveTab("cadunico")}>Abrir CadÚnico</button>
+                <button className="btn btn-secundario" type="button" onClick={() => setActiveTab("scfv")}>Abrir SCFV</button>
+                <button className="btn btn-secundario" type="button" onClick={() => setActiveTab("ficha")}>Abrir Ficha</button>
+                <button className="btn btn-secundario" type="button" onClick={() => setActiveTab("relatorios")}>Abrir Relatórios</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "paif" && (
+          <ErrorBoundary label="CRAS · Triagem + PAIF">
+      <>
+        <CrasPageHeader {...(CRAS_HEADERS[activeTab] || CRAS_HEADERS["inicio"] || {})} rightTag="CRAS" rightMetaLabel="Usuário" rightMetaValue={userName} />
+      </>
+
+            <TelaCras apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "cadunico" && (
+          <ErrorBoundary label="CRAS · CadÚnico">
+            <>
+              <CrasPageHeader
+                title="CadÚnico — Pré-cadastro e agenda"
+                subtitle="Pré-cadastro, agendamento, finalização e rastreabilidade por pessoa/família/caso."
+                bullets={[
+                  "Registrar pré-cadastro e vincular a caso/pessoa/família.",
+                  "Agendar/Reagendar, finalizar ou marcar não compareceu.",
+                  "Tudo aparece na Ficha e nos Relatórios."
+                ]}
+              />
+              <TelaCrasCadUnico apiBase={API_BASE} apiFetch={apiFetch} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "encaminhamentos" && (
+          <ErrorBoundary label="CRAS · Encaminhamentos">
+            <>
+            <CrasPageHeader
+              title="Encaminhamentos e devolutivas"
+              subtitle="Registro de encaminhamentos e controle de devolutiva por prazo."
+              bullets={["Criar encaminhamento por caso/PAIF.", "Cobrar devolutiva e controlar atrasos.", "Fila “sem devolutiva” para gestão."]}
+            />
+            <TelaCrasEncaminhamentos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} focus={encFocus} />
+          </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "casos" && (
+          <ErrorBoundary label="CRAS · Casos">
+            <>
+            <CrasPageHeader
+              title="Casos — Linha do metrô"
+              subtitle="Etapas, validação (48h), SLA e histórico auditável."
+              bullets={["Abrir caso por pessoa ou família.", "Avançar etapa e validar recebimento.", "SLA em risco/estourado destacado automaticamente."]}
+            />
+            <TelaCrasCasos apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+          </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "cadastros" && (
+          <ErrorBoundary label="CRAS · Cadastros">
+            <>
+            <CrasPageHeader
+              title="Cadastros SUAS"
+              subtitle="Pessoa, família e vínculos familiares (base para CRAS/CREAS)."
+              bullets={["Cadastrar Pessoa e Família (SUAS).", "Vincular membros e definir referência familiar.", "Base alimenta Casos, CadÚnico, SCFV e Ficha 360°."]}
+            />
+            <TelaCrasCadastros apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+          </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "programas" && (
+          <ErrorBoundary label="CRAS · Programas/Projetos">
+            <>
+            <CrasPageHeader
+              title="Programas e Projetos"
+              subtitle="Cadastre programas/projetos por público e inscreva participantes."
+              bullets={["Use a unidade ativa do cabeçalho.", "Capacidade máxima é opcional.", "Participantes vêm do Cadastro SUAS (pessoa_suas)."]}
+            />
+            <TelaCrasProgramas apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+          </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "scfv" && (
+          <ErrorBoundary label="CRAS · SCFV">
+            <>
+              <CrasPageHeader
+                title="SCFV — Turmas, chamada e relatórios"
+                subtitle="Turmas, inscrição, chamada, relatórios mensais e alertas (evasão/baixa presença/sem registro)."
+                bullets={[
+                  "Criar turmas por público/faixa etária e controlar vagas.",
+                  "Registrar chamada e salvar lote por data.",
+                  "Gerar relatório mensal com alertas e exportação."
+                ]}
+              />
+              <TelaCrasScfv apiBase={API_BASE} apiFetch={apiFetch} focus={scfvFocus} onFocusConsumed={() => setScfvFocus(null)} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "ficha" && (
+          <ErrorBoundary label="CRAS · Ficha">
+            <>
+              <CrasPageHeader
+                title="Fichas — Pessoa e Família (360°)"
+                subtitle="Visão completa: pendências, condicionalidades, auditoria e documentos/anexos."
+                bullets={[
+                  "Ficha individual e ficha da família com navegação entre membros.",
+                  "Pendências com contexto (drill-down) e ações de resolver.",
+                  "Documentos: links e upload de arquivos (MVP local)."
+                ]}
+              />
+              <TelaCrasFicha apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+
+        {activeTab === "relatorios" && (
+          <ErrorBoundary label="CRAS · Relatórios">
+            <>
+              <CrasPageHeader
+                title="Relatórios — Gestão e gargalos"
+                subtitle="Visão consolidada com drill-down para ficha e ações rápidas."
+                bullets={[
+                  "PIA faltando, CadÚnico atrasado e SCFV (evasão/baixa/sem registro).",
+                  "Top por território/turmas e tabelas para agir.",
+                  "Abrir ficha já em Pendências (contexto)."
+                ]}
+              />
+              <TelaCrasRelatorios apiBase={API_BASE} apiFetch={apiFetch} onNavigate={onNavigate} />
+            </>
+          </ErrorBoundary>
+        )}
+      </main>
+    </div>
+  );
+}

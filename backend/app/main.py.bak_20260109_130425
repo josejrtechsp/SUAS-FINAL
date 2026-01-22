@@ -1,0 +1,286 @@
+# app/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
+from pathlib import Path
+
+from .routers import cras_tarefas
+
+from app.core.db import init_db
+
+from app.routers.auth import router as auth_router
+from app.routers.municipios import router as municipios_router
+from app.routers.pessoas import router as pessoas_router
+from app.routers.atendimentos import router as atendimentos_router
+from app.routers.casos import router as casos_router
+from app.routers.acolhimentos import router as acolhimentos_router
+from app.routers.familia_router import router as familia_beneficios_router
+from app.routers.encaminhamentos import router as encaminhamentos_router
+from app.routers.linha_metro import router as linha_metro_router
+from app.routers.saude import router as saude_router
+from app.routers.protocolo import router as protocolo_router
+from app.routers.dashboard import router as dashboard_router
+
+try:
+    from app.routers.usuarios import router as usuarios_router  # type: ignore
+except Exception:
+    usuarios_router = None
+
+from app.routers.cras import router as cras_router
+from app.routers.cras_casos import router as cras_casos_router
+from app.routers.cras_cadastros import router as cras_cadastros_router
+from app.routers.cras_programas import router as cras_programas_router
+from app.routers.cras_linha_metro import router as cras_linha_metro_router
+from app.routers.cras_cadunico import router as cras_cadunico_router
+from app.routers.cras_pia import router as cras_pia_router
+from app.routers.cras_scfv import router as cras_scfv_router
+from app.routers.cras_ficha import router as cras_ficha_router
+from app.routers.cras_identidade import router as cras_identidade_router
+
+try:
+    from app.routers.cras_ficha_uploads import router as cras_ficha_uploads_router  # type: ignore
+except Exception:
+    cras_ficha_uploads_router = None
+
+from app.routers.cras_relatorios import router as cras_relatorios_router
+
+try:
+    from app.routers.cras_automacoes import router as cras_automacoes_router  # type: ignore
+except Exception:
+    cras_automacoes_router = None
+from app.routers.cras_encaminhamentos import router as cras_encaminhamentos_router
+
+try:
+    from app.routers.suas_encaminhamentos import router as suas_encaminhamentos_router  # type: ignore
+except Exception:
+    suas_encaminhamentos_router = None
+
+try:
+    from app.routers.creas import router as creas_router  # type: ignore
+except Exception:
+    creas_router = None
+
+try:
+    from app.routers.osc import router as osc_router  # type: ignore
+except Exception:
+    osc_router = None
+
+try:
+    from app.routers.terceiro_setor import router as terceiro_setor_router  # type: ignore
+except Exception:
+    terceiro_setor_router = None
+
+try:
+    from app.routers.config import router as config_router  # type: ignore
+except Exception:
+    config_router = None
+
+try:
+    from app.routers.config_documentos import router as config_documentos_router  # type: ignore
+except Exception:
+    config_documentos_router = None
+
+try:
+    from app.routers.branding import router as branding_router  # type: ignore
+except Exception:
+    branding_router = None
+
+try:
+    from app.routers.documentos import router as documentos_router  # type: ignore
+except Exception:
+    documentos_router = None
+
+try:
+    from app.routers.ia import router as ia_router  # type: ignore
+except Exception:
+    ia_router = None
+
+from app.routers.gestao import router as gestao_router
+
+try:
+    from app.routers.cras_prontuario import router as cras_prontuario_router  # type: ignore
+except Exception:
+    cras_prontuario_router = None
+
+try:
+    from app.routers.cras_rma import router as cras_rma_router  # type: ignore
+except Exception:
+    cras_rma_router = None
+
+# opcionais (não quebram se arquivo não existir)
+try:
+    from app.routers.gestao_fila_plus import router as gestao_fila_plus_router  # type: ignore
+except Exception:
+    gestao_fila_plus_router = None
+
+try:
+    from app.routers.gestao_fila_lote import router as gestao_fila_lote_router  # type: ignore
+except Exception:
+    gestao_fila_lote_router = None
+
+try:
+    from app.routers.gestao_automacoes import router as gestao_automacoes_router  # type: ignore
+except Exception:
+    gestao_automacoes_router = None
+
+
+app = FastAPI(title="Sistema Pop Rua")
+
+# ✅ Compressão de respostas (ajuda bastante quando há JSON grande)
+# Obs.: em produção, se houver proxy (Nginx/Traefik) ele também pode comprimir,
+# mas isso já melhora muito no dev e em deploy simples.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Static uploads (MVP)
+UPLOAD_ROOT = Path(os.getenv("UPLOAD_ROOT", "uploads")).resolve()
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT)), name="uploads")
+
+# ✅ Ajuste conforme seu front (Vite 5173/5174 etc.)
+ORIGINS = [
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+
+    # Vite preview (npm run preview)
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+    # Seed opcional de regras padrão (automacoes) — idempotente.
+    # Ative com: export GESTAO_AUTOMACOES_SEED=true
+    # Opcional: export GESTAO_AUTOMACOES_SEED_MUNICIPIO_ID=1
+    if str(os.getenv("GESTAO_AUTOMACOES_SEED", "")).strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from sqlmodel import Session
+            from app.core.db import engine
+            from app.routers.gestao_automacoes import seed_templates_padroes  # type: ignore
+
+            mid_env = str(os.getenv("GESTAO_AUTOMACOES_SEED_MUNICIPIO_ID", "")).strip()
+            mid = int(mid_env) if mid_env.isdigit() else None
+
+            with Session(engine) as session:
+                out = seed_templates_padroes(session=session, municipio_id=mid)
+                # log conciso para produção
+                try:
+                    criadas = len((out or {}).get('criadas') or [])
+                    existentes = len((out or {}).get('existentes') or [])
+                    municipios = (out or {}).get('municipios')
+                    print(f"INFO: seed automacoes: criadas={criadas} existentes={existentes} municipios={municipios}")
+                except Exception:
+                    print("INFO: seed automacoes concluído")
+        except Exception as e:
+            print("WARN: seed automacoes falhou:", e)
+
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+
+# ✅ Routers
+app.include_router(auth_router)
+app.include_router(cras_tarefas.router)
+app.include_router(municipios_router)
+app.include_router(pessoas_router)
+app.include_router(atendimentos_router)
+app.include_router(casos_router)
+app.include_router(acolhimentos_router)
+app.include_router(familia_beneficios_router)
+app.include_router(encaminhamentos_router)
+app.include_router(linha_metro_router)
+app.include_router(saude_router)
+app.include_router(protocolo_router)
+app.include_router(dashboard_router)
+
+if usuarios_router:
+    app.include_router(usuarios_router)
+
+app.include_router(cras_router)
+
+if cras_prontuario_router:
+    app.include_router(cras_prontuario_router)
+
+if cras_rma_router:
+    app.include_router(cras_rma_router)
+app.include_router(cras_casos_router)
+app.include_router(cras_cadastros_router)
+app.include_router(cras_programas_router)
+app.include_router(cras_linha_metro_router)
+app.include_router(cras_cadunico_router)
+app.include_router(cras_encaminhamentos_router)
+
+app.include_router(cras_pia_router)
+app.include_router(cras_scfv_router)
+app.include_router(cras_ficha_router)
+app.include_router(cras_identidade_router)
+
+if cras_ficha_uploads_router:
+    app.include_router(cras_ficha_uploads_router)
+
+app.include_router(cras_relatorios_router)
+
+if cras_automacoes_router:
+    app.include_router(cras_automacoes_router)
+
+if creas_router:
+    app.include_router(creas_router)
+
+if osc_router:
+    app.include_router(osc_router)
+
+if terceiro_setor_router:
+    app.include_router(terceiro_setor_router)
+
+if config_router:
+    app.include_router(config_router)
+
+if config_documentos_router:
+    app.include_router(config_documentos_router)
+
+if branding_router:
+    app.include_router(branding_router)
+
+if documentos_router:
+    app.include_router(documentos_router)
+
+if ia_router:
+    app.include_router(ia_router)
+
+if gestao_fila_plus_router:
+    app.include_router(gestao_fila_plus_router)
+
+if gestao_fila_lote_router:
+    app.include_router(gestao_fila_lote_router)
+
+if gestao_automacoes_router:
+    app.include_router(gestao_automacoes_router)
+
+if suas_encaminhamentos_router:
+    app.include_router(suas_encaminhamentos_router)
+
+app.include_router(gestao_router)

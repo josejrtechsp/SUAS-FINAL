@@ -1,0 +1,101 @@
+import React from "react";
+import "./SuasHub.css";
+
+const MODS = [
+  { id: "poprua", name: "Pop Rua", desc: "Atendimento e gestão de caso", status: "ativo" },
+  { id: "cras", name: "CRAS", desc: "Proteção Social Básica", status: "ativo" },
+  { id: "creas", name: "CREAS", desc: "Proteção Social Especial (PAEFI)", status: "ativo" },
+
+  { id: "centropop", name: "Centro POP", desc: "Serviços e rotinas do Centro POP", status: "breve" },
+  { id: "gestao", name: "Gestão", desc: "Relatórios, coordenação e governança", status: "breve" },
+  { id: "terceiro_setor", name: "Terceiro Setor", desc: "OSCs, parcerias e rede", status: "breve" },
+];
+
+export default function SuasHubPage() {
+  const goHome = () => {
+    // volta para a home do portal IDEAL
+    const u = new URL(window.location.href);
+    u.searchParams.delete("mod");
+    u.searchParams.delete("hub");
+    u.searchParams.delete("artigo");
+    window.location.href = u.pathname + u.search;
+  };
+
+  const entrar = (mod) => {
+    window.location.href = "/app?mod=" + mod;
+  };
+
+  const ativos = MODS.filter((m) => m.status === "ativo");
+  const breve = MODS.filter((m) => m.status !== "ativo");
+
+  return (
+    <div className="suashub-root">
+      <div className="suashub-container">
+        <div className="suashub-top">
+          <div className="suashub-brand">
+            <img className="suashub-logo" src="/ideal-logo.png" alt="IDEAL" />
+            <div className="suashub-brandText">
+              <span className="suashub-tag">SUAS · HUB</span>
+              <div className="suashub-title">Escolha o módulo</div>
+              <div className="suashub-subtitle">Módulos ativos: Pop Rua, CRAS e CREAS.</div>
+            </div>
+          </div>
+
+          <div className="suashub-actions">
+            <button className="suashub-btn" type="button" onClick={goHome}>← Voltar</button>
+            <button className="suashub-btn suashub-btnPrimary" type="button" onClick={() => entrar("poprua")}>
+              Entrar no sistema
+            </button>
+          </div>
+        </div>
+
+        <div className="suashub-main">
+          <div className="suashub-section">
+            <div className="suashub-sectionTitle">
+              <span>Ativos</span> <span className="suashub-badge">{ativos.length}</span>
+            </div>
+            <div className="suashub-grid">
+              {ativos.map((m) => (
+                <div className="suashub-card" key={m.id}>
+                  <div className="suashub-cardTop">
+                    <div className="suashub-cardName">{m.name}</div>
+                    <div className="suashub-pillActive">ATIVO</div>
+                  </div>
+                  <div className="suashub-cardDesc">{m.desc}</div>
+                  <div className="suashub-cardBtnRow">
+                    <button className="suashub-cardBtn suashub-cardBtnPrimary" onClick={() => entrar(m.id)}>
+                      Entrar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="suashub-section">
+            <div className="suashub-sectionTitle">
+              <span>Em breve</span> <span className="suashub-badge">{breve.length}</span>
+            </div>
+            <div className="suashub-grid">
+              {breve.map((m) => (
+                <div className="suashub-card suashub-cardDisabled" key={m.id}>
+                  <div className="suashub-cardTop">
+                    <div className="suashub-cardName">{m.name}</div>
+                    <div className="suashub-pillSoon">EM BREVE</div>
+                  </div>
+                  <div className="suashub-cardDesc">{m.desc}</div>
+                  <div className="suashub-cardBtnRow">
+                    <button className="suashub-cardBtn" disabled>
+                      Em breve
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}

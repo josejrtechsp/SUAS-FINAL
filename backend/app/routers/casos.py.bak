@@ -1,0 +1,476 @@
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, SQLModel, select
+
+from app.core.db import get_session
+from app.core.auth import get_current_user
+from app.models.usuario import Usuario
+from app.models.municipio import Municipio
+from app.models.caso_pop_rua import (
+    CasoPopRua,
+    CasoPopRuaUpdate,
+    CasoPopRuaEtapaHistorico,
+)
+from app.models.pessoa import PessoaRua
+
+# ---- Linha de metrô Pop Rua (ordem das etapas) ----
+LINHA_METRO_ETAPAS = [
+    {
+        "codigo": "ABORDAGEM",
+        "nome": "Abordagem inicial",
+        "descricao": "Primeiro contato com a equipe, escuta inicial e identificação da situação.",
+    },
+    {
+        "codigo": "IDENTIFICACAO",
+        "nome": "Identificação e registro",
+        "descricao": "Coleta de dados básicos, documentos, origem, vínculos, situação de rua.",
+    },
+    {
+        "codigo": "DIAGNOSTICO",
+        "nome": "Avaliação e diagnóstico",
+        "descricao": "Análise técnica da situação, definição de riscos, vulnerabilidades e prioridades.",
+    },
+    {
+        "codigo": "PIA",
+        "nome": "Elaboração do PIA / Plano",
+        "descricao": "Definição conjunta do plano de atendimento, metas e responsáveis.",
+    },
+    {
+        "codigo": "EXECUCAO",
+        "nome": "Execução das ações",
+        "descricao": "Encaminhamentos, benefícios, cuidados em saúde, acolhimento, etc.",
+    },
+    {
+        "codigo": "MONITORAMENTO",
+        "nome": "Monitoramento",
+        "descricao": "Acompanhamento dos encaminhamentos e reavaliação contínua.",
+    },
+    {
+        "codigo": "ARTICULACAO_REDE",
+        "nome": "Articulação em rede",
+        "descricao": "Diálogo com outros municípios e políticas (saúde, habitação, trabalho, etc.).",
+    },
+    {
+        "codigo": "REVISAO",
+        "nome": "Revisão e replanejamento",
+        "descricao": "Revisão do plano quando necessário, inclusão de novas ações.",
+    },
+    {
+        "codigo": "ENCERRAMENTO",
+        "nome": "Encerramento do caso",
+        "descricao": "Fechamento do caso com registro do motivo e das condições de saída.",
+    },
+]
+
+router = APIRouter(prefix="/casos", tags=["casos"])
+
+REDACTION_TEXT = "🔒 Restrito (LGPD)"
+
+
+# =========================================================
+# Helpers de Perfil / Município / LGPD
+# =========================================================
+def _perfil(usuario: Usuario) -> str:
+    return (getattr(usuario, "perfil", "") or "").strip().lower()
+
+
+def _is_admin(usuario: Usuario) -> bool:
+    return _perfil(usuario) == "admin"
+
+
+def _is_gestor_ou_admin(usuario: Usuario) -> bool:
+    return _perfil(usuario) in {"gestor_consorcio", "admin"}
+
+
+def _is_municipal(usuario: Usuario) -> bool:
+    return _perfil(usuario) in {"operador", "coord_municipal"}
+
+
+def _user_municipio_id(usuario: Usuario) -> int:
+    mun = getattr(usuario, "municipio_id", None)
+    if mun is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuário sem município associado. Acesso negado.",
+        )
+    return int(mun)
+
+
+def _check_acesso_caso_por_municipio(caso: CasoPopRua, usuario: Usuario):
+    """
+    operador/coord municipal: apenas casos do próprio município
+    gestor/admin: tudo
+    """
+    if _is_gestor_ou_admin(usuario):
+        return
+
+    user_mun = _user_municipio_id(usuario)
+    if int(caso.municipio_id) != int(user_mun):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado: caso fora do seu município.",
+        )
+
+
+def _redigir_caso(caso: CasoPopRua, usuario: Usuario) -> CasoPopRua:
+    """
+    LGPD:
+    - Admin vê completo
+    - Outros: observações redigidas
+    """
+    if _is_admin(usuario):
+        return caso
+
+    return CasoPopRua(
+        id=caso.id,
+        pessoa_id=caso.pessoa_id,
+        municipio_id=caso.municipio_id,
+        observacoes_iniciais=REDACTION_TEXT if caso.observacoes_iniciais else None,
+        observacoes_gerais=REDACTION_TEXT if caso.observacoes_gerais else None,
+        status=caso.status,
+        etapa_atual=caso.etapa_atual,
+        ativo=caso.ativo,
+        data_abertura=caso.data_abertura,
+        data_ultima_atualizacao=caso.data_ultima_atualizacao,
+        data_encerramento=caso.data_encerramento,
+        motivo_encerramento=caso.motivo_encerramento,
+        data_prevista_proxima_acao=caso.data_prevista_proxima_acao,
+        data_ultima_acao=caso.data_ultima_acao,
+        flag_estagnado=caso.flag_estagnado,
+        dias_estagnado=caso.dias_estagnado,
+        tipo_estagnacao=caso.tipo_estagnacao,
+        motivo_estagnacao=caso.motivo_estagnacao,
+    )
+
+
+def _redigir_historico(h: CasoPopRuaEtapaHistorico, usuario: Usuario) -> CasoPopRuaEtapaHistorico:
+    if _is_admin(usuario):
+        return h
+
+    return CasoPopRuaEtapaHistorico(
+        id=h.id,
+        caso_id=h.caso_id,
+        etapa=h.etapa,
+        data_acao=h.data_acao,
+        usuario_responsavel=h.usuario_responsavel,
+        observacoes=REDACTION_TEXT if h.observacoes else None,
+        tipo_acao=h.tipo_acao,
+        motivo_estagnacao=h.motivo_estagnacao,
+    )
+
+
+# =========================================================
+# Modelos de requisição
+# =========================================================
+class CasoPopRuaCreate(SQLModel):
+    pessoa_id: int
+    municipio_id: Optional[int] = None
+    observacoes_iniciais: Optional[str] = None
+    observacoes_gerais: Optional[str] = None
+
+
+class AvancarEtapaRequest(SQLModel):
+    usuario_responsavel: Optional[str] = None
+    observacoes: Optional[str] = None
+    data_prevista_proxima_acao: Optional[datetime] = None
+    motivo_estagnacao: Optional[str] = None
+
+
+# =========================================================
+# Endpoints
+# =========================================================
+@router.post("/", response_model=CasoPopRua, status_code=status.HTTP_201_CREATED)
+def criar_caso(
+    payload: CasoPopRuaCreate,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Cria um novo caso Pop Rua.
+
+    Segurança/LGPD:
+    - exige login
+    - operador/coord: município do caso é FORÇADO para o município do usuário
+    - gestor/admin: pode criar para qualquer município (mas município precisa existir)
+    - retorno redigido para não-admin
+    """
+    pessoa = session.get(PessoaRua, payload.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+
+    # define município do caso
+    if _is_municipal(usuario):
+        municipio_id = _user_municipio_id(usuario)
+    else:
+        if payload.municipio_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="municipio_id é obrigatório para gestor/admin criar caso.",
+            )
+        municipio_id = int(payload.municipio_id)
+
+    # confere município existe
+    m = session.get(Municipio, int(municipio_id))
+    if not m:
+        raise HTTPException(status_code=400, detail="Município não encontrado.")
+
+    agora = datetime.utcnow()
+
+    caso = CasoPopRua(
+        pessoa_id=payload.pessoa_id,
+        municipio_id=int(municipio_id),
+        observacoes_iniciais=payload.observacoes_iniciais,
+        observacoes_gerais=payload.observacoes_gerais,
+        etapa_atual="ABORDAGEM",
+        status="em_andamento",
+        ativo=True,
+        data_abertura=agora,
+        data_ultima_atualizacao=agora,
+        data_ultima_acao=agora,
+    )
+
+    session.add(caso)
+    session.commit()
+    session.refresh(caso)
+
+    historico = CasoPopRuaEtapaHistorico(
+        caso_id=caso.id,
+        etapa=caso.etapa_atual,
+        data_acao=agora,
+        usuario_responsavel=getattr(usuario, "nome", None) or "(sistema)",
+        observacoes="Caso criado no sistema.",
+        tipo_acao="criacao_caso",
+    )
+    session.add(historico)
+    session.commit()
+
+    return _redigir_caso(caso, usuario)
+
+
+@router.get("/", response_model=List[CasoPopRua])
+def listar_casos(
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Lista casos.
+
+    Segurança:
+    - operador/coord: só do próprio município
+    - gestor/admin: todos
+    LGPD:
+    - redige observações para não-admin
+    """
+    stmt = select(CasoPopRua)
+
+    if not _is_gestor_ou_admin(usuario):
+        user_mun = _user_municipio_id(usuario)
+        stmt = stmt.where(CasoPopRua.municipio_id == int(user_mun))
+
+    casos = session.exec(stmt).all()
+
+    if _is_admin(usuario):
+        return casos
+
+    return [_redigir_caso(c, usuario) for c in casos]
+
+
+@router.get("/{caso_id}", response_model=CasoPopRua)
+def obter_caso(
+    caso_id: int,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    caso = session.get(CasoPopRua, caso_id)
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+
+    _check_acesso_caso_por_municipio(caso, usuario)
+    return _redigir_caso(caso, usuario)
+
+
+@router.patch("/{caso_id}", response_model=CasoPopRua)
+def atualizar_caso(
+    caso_id: int,
+    dados: CasoPopRuaUpdate,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    caso = session.get(CasoPopRua, caso_id)
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+
+    _check_acesso_caso_por_municipio(caso, usuario)
+
+    dados_dict = dados.dict(exclude_unset=True)
+    for campo, valor in dados_dict.items():
+        setattr(caso, campo, valor)
+
+    caso.data_ultima_atualizacao = datetime.utcnow()
+    session.add(caso)
+    session.commit()
+    session.refresh(caso)
+
+    return _redigir_caso(caso, usuario)
+
+
+# Linha de metrô – estrutura fixa (pode ficar aberta ou autenticada; aqui deixei autenticada por padrão)
+@router.get("/linha-metro/etapas")
+def listar_etapas_linha_metro(usuario: Usuario = Depends(get_current_user)):
+    etapas = []
+    for i, etapa in enumerate(LINHA_METRO_ETAPAS, start=1):
+        etapas.append(
+            {
+                "ordem": i,
+                "codigo": etapa["codigo"],
+                "nome": etapa["nome"],
+                "descricao": etapa["descricao"],
+            }
+        )
+    return etapas
+
+
+@router.get("/{caso_id}/linha-metro")
+def linha_metro_do_caso(
+    caso_id: int,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    caso = session.get(CasoPopRua, caso_id)
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+
+    _check_acesso_caso_por_municipio(caso, usuario)
+
+    etapas_com_status = []
+    codigos = [e["codigo"] for e in LINHA_METRO_ETAPAS]
+
+    try:
+        indice_atual = codigos.index(caso.etapa_atual)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Etapa atual inválida no caso: {caso.etapa_atual}",
+        )
+
+    for i, etapa in enumerate(LINHA_METRO_ETAPAS):
+        if i < indice_atual:
+            st = "concluida"
+        elif i == indice_atual:
+            st = "em_andamento"
+        else:
+            st = "nao_iniciada"
+
+        etapas_com_status.append(
+            {
+                "codigo": etapa["codigo"],
+                "nome": etapa["nome"],
+                "descricao": etapa["descricao"],
+                "status": st,
+                "ordem": i + 1,
+            }
+        )
+
+    return {
+        "caso_id": caso.id,
+        "pessoa_id": caso.pessoa_id,
+        "municipio_id": getattr(caso, "municipio_id", None),
+        "etapa_atual": caso.etapa_atual,
+        "status_caso": caso.status,
+        "etapas": etapas_com_status,
+    }
+
+
+@router.post("/{caso_id}/avancar-etapa", response_model=CasoPopRua)
+def avancar_etapa(
+    caso_id: int,
+    body: AvancarEtapaRequest,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    caso = session.get(CasoPopRua, caso_id)
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+
+    _check_acesso_caso_por_municipio(caso, usuario)
+
+    if caso.status == "encerrado":
+        raise HTTPException(status_code=400, detail="Caso já está encerrado.")
+
+    codigos = [e["codigo"] for e in LINHA_METRO_ETAPAS]
+
+    try:
+        idx_atual = codigos.index(caso.etapa_atual)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Etapa atual inválida no caso: {caso.etapa_atual}",
+        )
+
+    agora = datetime.utcnow()
+
+    if idx_atual == len(LINHA_METRO_ETAPAS) - 1:
+        caso.status = "encerrado"
+        caso.data_encerramento = agora
+    else:
+        caso.etapa_atual = LINHA_METRO_ETAPAS[idx_atual + 1]["codigo"]
+
+    caso.data_ultima_acao = agora
+    caso.data_ultima_atualizacao = agora
+
+    if body.data_prevista_proxima_acao:
+        caso.data_prevista_proxima_acao = body.data_prevista_proxima_acao
+    else:
+        caso.data_prevista_proxima_acao = agora + timedelta(days=7)
+
+    caso.flag_estagnado = False
+    caso.dias_estagnado = 0
+    caso.tipo_estagnacao = None
+    caso.motivo_estagnacao = None
+
+    responsavel = body.usuario_responsavel or getattr(usuario, "nome", None) or "(responsável não informado)"
+
+    historico = CasoPopRuaEtapaHistorico(
+        caso_id=caso.id,
+        etapa=caso.etapa_atual,
+        data_acao=agora,
+        usuario_responsavel=responsavel,
+        observacoes=body.observacoes,
+        tipo_acao="avanco_etapa",
+        motivo_estagnacao=body.motivo_estagnacao,
+    )
+
+    session.add(caso)
+    session.add(historico)
+    session.commit()
+    session.refresh(caso)
+
+    return _redigir_caso(caso, usuario)
+
+
+@router.get("/{caso_id}/historico-etapas", response_model=List[CasoPopRuaEtapaHistorico])
+def listar_historico_etapas(
+    caso_id: int,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+):
+    caso = session.get(CasoPopRua, caso_id)
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+
+    _check_acesso_caso_por_municipio(caso, usuario)
+
+    query = (
+        select(CasoPopRuaEtapaHistorico)
+        .where(CasoPopRuaEtapaHistorico.caso_id == caso_id)
+        .order_by(CasoPopRuaEtapaHistorico.data_acao)
+    )
+
+    hist = session.exec(query).all()
+
+    if _is_admin(usuario):
+        return hist
+
+    return [_redigir_historico(h, usuario) for h in hist]

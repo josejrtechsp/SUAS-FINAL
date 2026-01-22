@@ -1,0 +1,169 @@
+import React, { useMemo, useState } from "react";
+import IdealAreas from "./components/IdealAreas.jsx";
+import { Link } from "react-router-dom";
+
+import { IDEAL_SERVICES } from "./content/idealServices.js";
+import "./Portal.css";
+
+function goAtualizacoes(q) {
+  const query = (q || "").trim();
+  const url = query ? `/atualizacoes?q=${encodeURIComponent(query)}` : "/atualizacoes";
+  window.location.assign(url);
+}
+
+export default function PreLoginPage({ onEntrar }) {
+  const [busca, setBusca] = useState("");
+
+  const chips = useMemo(
+    () => [
+      "LGPD por perfil",
+      "Trilha de auditoria",
+      "Fluxo por etapas",
+      "SLA e pendências",
+      "Rede e consórcio",
+      "Dashboards",
+      "Pesquisa e diagnóstico",
+    ],
+    []
+  );
+
+  const audiencias = useMemo(
+    () => [
+      {
+        icon: "🏛️",
+        title: "Prefeituras",
+        text:
+          "Organize execução por fluxo, padronize registros, reduza retrabalho e gere evidências para auditoria, prestação de contas e controle social.",
+      },
+      {
+        icon: "🌐",
+        title: "Consórcios",
+        text:
+          "Operação regional com padrões, indicadores comparáveis e cooperação entre municípios — mantendo LGPD, rastreabilidade e governança.",
+      },
+      {
+        icon: "🏢",
+        title: "Empresas",
+        text:
+          "Pesquisa de mercado e inteligência para decisão: posicionamento, satisfação, hábitos e oportunidades reais para investir melhor.",
+      },
+      {
+        icon: "🗳️",
+        title: "Campanhas",
+        text:
+          "Pesquisa eleitoral e tracking com leitura territorial e segmentação: menos achismo, mais estratégia e comunicação testada.",
+      },
+    ],
+    []
+  );
+
+  const modulos = useMemo(
+    () => [
+      { id: "cras", icon: "🏠", title: "CRAS", text: "Triagem, acompanhamento familiar e encaminhamentos com padrão." },
+      { id: "creas", icon: "🧾", title: "CREAS", text: "Casos complexos com etapas, prazos e contexto preservado." },
+      { id: "poprua", icon: "🚶‍♀️", title: "Pop Rua", text: "Abordagem, busca ativa e gestão de caso com rastreabilidade." },
+      { id: "acolhimentos", icon: "🛏️", title: "Acolhimentos", text: "Vagas, entradas/saídas, acompanhamento e relatórios claros." },
+      { id: "gestao", icon: "🎯", title: "Gestão", text: "Painel do município: gargalos, produtividade e indicadores." },
+      { id: "terceiro_setor", icon: "🤝", title: "Terceiro Setor", text: "Parcerias/OSCs: execução, documentos e prestação de contas." },
+      { id: "vigilancia", icon: "🗺️", title: "Vigilância", text: "Indicadores e visão territorial para priorização e evidências." },
+      { id: "conselho", icon: "🏛️", title: "Conselho", text: "CMAS: evidências e relatórios com trilha de auditoria." },
+    ],
+    []
+  );
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brandRow">
+            <img className="portal3-logo" src="/ideal-logo.png" alt="IDEAL" />
+            <div className="portal3-brand">
+              <div className="portal3-brand-tag">IDEAL · INTELIGÊNCIA PÚBLICA E DE MERCADO</div>
+              <div className="portal3-brand-title">
+                Plataforma Municipal <span className="portal3-brand-highlight">Integrada</span>
+              </div>
+              <div className="portal3-brand-sub">GovTech • Pesquisa • Diagnóstico • Monitoramento • Execução</div>
+            </div>
+          </div>
+
+          <div className="portal3-actions">
+            <input
+              className="portal3-search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && goAtualizacoes(busca)}
+              placeholder="Buscar no portal (MDS, CNAS, FNAS, Tipificação, NOB SUAS, CadÚnico, RMA...)"
+            />
+            <button type="button" className="portal3-btn-secondary" onClick={() => goAtualizacoes(busca)}>
+              Atualizações oficiais
+            </button>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Acessar o painel
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="portal3-hero">
+        <div className="portal3-hero-inner">
+          <div>
+            <div className="portal3-kicker">
+              SUAS • Saúde • Educação • Consórcios • Empresas • Campanhas • Portal de referências
+            </div>
+
+            <h1 className="portal3-title">
+              Do diagnóstico à execução: <span className="portal3-highlight">governança de dados</span> e software para
+              entregar resultado.
+            </h1>
+
+            <p className="portal3-lead">
+              A IDEAL conecta <b>pesquisa e inteligência</b>, <b>planejamento e diagnóstico</b>, <b>governança e execução</b>
+              e <b>tecnologia</b> — com fluxos, SLAs, rastreabilidade e indicadores.
+            </p>
+
+            <div className="portal3-cta-row">
+              <button type="button" className="portal3-btn-primary portal3-btn-big" onClick={() => onEntrar?.()}>
+                Entrar no sistema
+              </button>
+              <a className="portal3-link" href="#servicos">
+                Ver serviços ↓
+              </a>
+              <a className="portal3-link" href="#modulos">
+                Ver módulos ↓
+              </a>
+              <a className="portal3-link" href="/atualizacoes">
+                Atualizações →
+              </a>
+            </div>
+
+            <div className="portal3-chips">
+              {chips.map((c) => (
+                <span key={c} className="portal3-chip">
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="portal3-feature">
+            <div className="portal3-feature-title">O que você ganha</div>
+            <ul className="portal3-bullets">
+              <li>Padronização (fim do “cada um faz do seu jeito”).</li>
+              <li>Pendências, etapas e responsáveis visíveis (SLA).</li>
+              <li>Histórico contínuo + trilha de auditoria (evidências).</li>
+              <li>Indicadores para gestão, controle social e prestação de contas.</li>
+              <li>Operação em rede e visão regional (consórcios).</li>
+            </ul>
+            <button type="button" className="portal3-btn-secondary" onClick={() => onEntrar?.()}>
+              Escolher módulo (login)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="portal3-main">
+      <IdealAreas />
+    </main>
+    </div>
+  );
+}

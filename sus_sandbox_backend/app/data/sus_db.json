@@ -1,0 +1,159 @@
+{
+  "seq": {
+    "programa": 0,
+    "acao": 0,
+    "meta": 0,
+    "indicador": 0,
+    "tarefa": 0,
+    "evidencia": 0,
+    "conformidade_item": 9,
+    "importacao": 0,
+    "relatorio": 0
+  },
+  "programas": [],
+  "acoes": [],
+  "metas": [],
+  "indicadores": [],
+  "tarefas": [],
+  "evidencias": [],
+  "competencias": [
+    {
+      "competencia": "2026-01",
+      "status": "aberta",
+      "criado_em": "2026-01-07T02:11:58Z",
+      "fechado_em": null
+    }
+  ],
+  "conformidade_itens": [
+    {
+      "id": 1,
+      "competencia": "2026-01",
+      "area": "aps",
+      "titulo": "Responsável definido",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 2,
+      "competencia": "2026-01",
+      "area": "aps",
+      "titulo": "Pendências registradas com motivo",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 3,
+      "competencia": "2026-01",
+      "area": "aps",
+      "titulo": "Evidências/protocolos anexados",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 4,
+      "competencia": "2026-01",
+      "area": "vig",
+      "titulo": "Pendências de vigilância registradas",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 5,
+      "competencia": "2026-01",
+      "area": "vig",
+      "titulo": "Comprovantes anexados",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 6,
+      "competencia": "2026-01",
+      "area": "farm",
+      "titulo": "Pendências registradas",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 7,
+      "competencia": "2026-01",
+      "area": "farm",
+      "titulo": "Comprovantes anexados",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 8,
+      "competencia": "2026-01",
+      "area": "gest",
+      "titulo": "Relatórios gerados",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    },
+    {
+      "id": 9,
+      "competencia": "2026-01",
+      "area": "gest",
+      "titulo": "Ata/registro de controle social anexado (quando aplicável)",
+      "status": "pendente",
+      "responsavel": "",
+      "comentario": "",
+      "evidencia_ids": [],
+      "criado_em": "2026-01-07T02:11:58Z",
+      "atualizado_em": "2026-01-07T02:11:58Z"
+    }
+  ],
+  "importacoes": [],
+  "relatorios": [
+    {
+      "tipo": "pendencias",
+      "competencia": "2026-01",
+      "body": {
+        "competencia": "2026-01",
+        "pendencias": []
+      },
+      "id": 1,
+      "criado_em": "2026-01-07T19:22:47.411038Z",
+      "atualizado_em": "2026-01-07T19:22:47.411038Z"
+    }
+  ],
+  "meta": {
+    "created_at": "2026-01-07T02:03:24Z",
+    "updated_at": "2026-01-07T19:22:47.411073Z",
+    "version": 1
+  },
+  "counters": {
+    "relatorios": 2
+  }
+}

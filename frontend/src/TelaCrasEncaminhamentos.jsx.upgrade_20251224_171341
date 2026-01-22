@@ -1,0 +1,276 @@
+import { useEffect, useMemo, useState } from "react";
+import PageHero from "./components/PageHero";
+
+export default function TelaCrasEncaminhamentos({ apiBase, apiFetch, usuarioLogado, focus }) {
+  const [unidades, setUnidades] = useState([]);
+  const [unidadeId, setUnidadeId] = useState(localStorage.getItem("cras_unidade_ativa") || "");
+  const municipioAtivo = localStorage.getItem("cras_municipio_ativo") || "";
+  const [pessoas, setPessoas] = useState([]);
+
+  const [lista, setLista] = useState([]);
+  const [semDevolutiva, setSemDevolutiva] = useState([]);
+
+  const [destinos, setDestinos] = useState([]);
+  const [msg, setMsg] = useState("");
+
+  const [form, setForm] = useState({
+    pessoa_id: "",
+    destino_tipo: "saude",
+    destino_nome: "",
+    motivo: "",
+    observacao_operacional: "",
+    prazo_devolutiva_dias: 7,
+  });
+
+  const statusOrdem = useMemo(() => ["enviado","recebido","agendado","atendido","devolutiva","concluido"], []);
+
+  const mapaUn = useMemo(() => {
+    const m = new Map();
+    unidades.forEach((u) => m.set(u.id, u.nome));
+    return m;
+  }, [unidades]);
+
+  async function loadBasics() {
+    const qU = new URLSearchParams();
+    if (municipioAtivo) qU.set("municipio_id", municipioAtivo);
+    const u = await apiFetch(`${apiBase}/cras/unidades?${qU.toString()}`);
+    if (u.ok) {
+      const data = await u.json();
+      setUnidades(data);
+      if (!unidadeId && data.length) setUnidadeId(String(data[0].id));
+    }
+
+    const p = await apiFetch(`${apiBase}/pessoas/`);
+    if (p.ok) setPessoas(await p.json());
+
+    const d = await apiFetch(`${apiBase}/cras/encaminhamentos/destinos`);
+    if (d.ok) {
+      const j = await d.json();
+      setDestinos(j.destinos || []);
+    }
+  }
+
+  async function loadList() {
+    if (!unidadeId) return;
+    const q = new URLSearchParams();
+    if (municipioAtivo) q.set("municipio_id", municipioAtivo);
+    q.set("unidade_id", unidadeId);
+
+    const r = await apiFetch(`${apiBase}/cras/encaminhamentos?${q.toString()}`);
+    if (r.ok) setLista(await r.json());
+
+    const s = await apiFetch(`${apiBase}/cras/encaminhamentos/sem-devolutiva?dias=7&${q.toString()}`);
+    if (s.ok) setSemDevolutiva(await s.json());
+  }
+
+  useEffect(() => { loadBasics(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadList(); /* eslint-disable-next-line */ }, [unidadeId]);
+
+  // SEM_DEVOLUTIVA_FOCUS
+  useEffect(() => {
+    if (focus === "sem") {
+      setTimeout(() => {
+        const el = document.getElementById("sem-devolutiva-panel");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    }
+  }, [focus]);
+
+  function nextStatus(atual) {
+    const idx = statusOrdem.indexOf(atual);
+    if (idx < 0) return "recebido";
+    if (idx >= statusOrdem.length - 1) return null;
+    return statusOrdem[idx + 1];
+  }
+
+  async function criar() {
+    setMsg("");
+    if (!unidadeId) return setMsg("Selecione uma unidade.");
+    if (!form.destino_nome.trim()) return setMsg("Informe o destino (nome).");
+    if (!form.motivo.trim()) return setMsg("Informe o motivo.");
+
+    const payload = {
+      municipio_id: municipioAtivo ? Number(municipioAtivo) : undefined,
+      unidade_id: Number(unidadeId),
+      pessoa_id: form.pessoa_id ? Number(form.pessoa_id) : null,
+      destino_tipo: form.destino_tipo,
+      destino_nome: form.destino_nome.trim(),
+      motivo: form.motivo.trim(),
+      observacao_operacional: form.observacao_operacional?.trim() || null,
+      prazo_devolutiva_dias: Number(form.prazo_devolutiva_dias || 7),
+    };
+
+    const r = await apiFetch(`${apiBase}/cras/encaminhamentos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) return setMsg("Erro ao criar encaminhamento.");
+
+    setForm({ ...form, destino_nome: "", motivo: "", observacao_operacional: "" });
+    setMsg("Encaminhamento criado ✅");
+    await loadList();
+  }
+
+  async function avancar(enc) {
+    const ns = nextStatus(enc.status);
+    if (!ns) return;
+    const r = await apiFetch(`${apiBase}/cras/encaminhamentos/${enc.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: ns, detalhe: "" }),
+    });
+    if (!r.ok) return setMsg("Não foi possível avançar status (ordem do fluxo).");
+    await loadList();
+  }
+
+  async function marcarDevolutiva(enc) {
+    const detalhe = prompt("Digite a devolutiva (resumo):") || "";
+    if (!detalhe.trim()) return;
+    const r = await apiFetch(`${apiBase}/cras/encaminhamentos/${enc.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "devolutiva", detalhe }),
+    });
+    if (!r.ok) return setMsg("Erro ao registrar devolutiva (ver ordem do fluxo).");
+    await loadList();
+  }
+
+  async function cancelar(enc) {
+    const r = await apiFetch(`${apiBase}/cras/encaminhamentos/${enc.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelado", detalhe: "Cancelado" }),
+    });
+    if (!r.ok) return setMsg("Erro ao cancelar.");
+    await loadList();
+  }
+
+  return (
+    <div className="layout-1col">
+      <PageHero
+        kicker="Módulo CRAS · Inteligencia Social"
+        title="Encaminhamentos com devolutiva"
+        subtitle="Painel 'Sem devolutiva' e fluxo por status (enviado → devolutiva)."
+        tips={[
+          "Sem devolutiva = encaminhamento aberto há X dias sem retorno registrado.",
+          "O fluxo por status evita perder o caso na rede.",
+        ]}
+        badge="CRAS"
+        rightText={<>Usuário: <strong>{usuarioLogado?.nome || "—"}</strong></>}
+      />
+
+      {msg ? <div className="card" style={{ padding: 12, borderRadius: 14 }}><strong>{msg}</strong></div> : null}
+
+      <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <label className="label" style={{ margin: 0 }}>Unidade CRAS</label>
+          <select className="input" value={unidadeId} onChange={(e) => setUnidadeId(e.target.value)} style={{ minWidth: 240 }}>
+            <option value="">Selecione…</option>
+            {unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
+          </select>
+          <button className="btn btn-secundario" type="button" onClick={loadList}>Atualizar</button>
+          <div className="texto-suave" style={{ marginLeft: "auto" }}>
+            Sem devolutiva: <b>{semDevolutiva.length}</b>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <h3 style={{ margin: 0 }}>Novo encaminhamento</h3>
+
+          <div style={{ height: 10 }} />
+          <label className="label">Pessoa (opcional)</label>
+          <select className="input" value={form.pessoa_id} onChange={(e) => setForm({ ...form, pessoa_id: e.target.value })}>
+            <option value="">Selecione…</option>
+            {pessoas.map((p) => (
+              <option key={p.id} value={p.id}>#{p.id} — {p.nome_social || p.nome_civil || "Pessoa"}</option>
+            ))}
+          </select>
+
+          <div style={{ height: 8 }} />
+          <label className="label">Destino (tipo)</label>
+          <select className="input" value={form.destino_tipo} onChange={(e) => setForm({ ...form, destino_tipo: e.target.value })}>
+            {destinos.map((d) => <option key={d.codigo} value={d.codigo}>{d.nome}</option>)}
+          </select>
+
+          <div style={{ height: 8 }} />
+          <label className="label">Destino (nome)</label>
+          <input className="input" value={form.destino_nome} onChange={(e) => setForm({ ...form, destino_nome: e.target.value })} placeholder="Ex.: UBS Centro, Escola X, CREAS..." />
+
+          <div style={{ height: 8 }} />
+          <label className="label">Motivo</label>
+          <input className="input" value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} placeholder="Ex.: avaliação, atualização, acompanhamento..." />
+
+          <div style={{ height: 8 }} />
+          <label className="label">Prazo devolutiva (dias)</label>
+          <input className="input" value={form.prazo_devolutiva_dias} onChange={(e) => setForm({ ...form, prazo_devolutiva_dias: e.target.value })} />
+
+          <div style={{ height: 8 }} />
+          <label className="label">Observação (operacional)</label>
+          <textarea className="input" rows={3} value={form.observacao_operacional} onChange={(e) => setForm({ ...form, observacao_operacional: e.target.value })} />
+
+          <div style={{ marginTop: 10 }}>
+            <button className="btn btn-primario" type="button" onClick={criar}>Criar encaminhamento</button>
+          </div>
+        </div>
+
+        <div id="sem-devolutiva-panel" className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <h3 style={{ margin: 0 }}>Sem devolutiva (7+ dias)</h3>
+          <div className="texto-suave" style={{ marginTop: 6 }}>Prioridade operacional para cobrança/retorno.</div>
+
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {semDevolutiva.length ? semDevolutiva.map((e) => (
+              <div key={e.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div><b>#{e.id}</b> · {e.destino_nome}</div>
+                  <div className="texto-suave">dias aberto: <b>{e.dias_aberto}</b></div>
+                </div>
+                <div className="texto-suave" style={{ marginTop: 4 }}>
+                  Tipo: {e.destino_tipo} · Status: <b>{e.status}</b> · Pessoa: {e.pessoa_id ? `#${e.pessoa_id}` : "—"}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button className="btn btn-primario" type="button" onClick={() => marcarDevolutiva(e)}>Registrar devolutiva</button>
+                  <button className="btn btn-secundario" type="button" onClick={() => avancar(e)}>Avançar status</button>
+                </div>
+              </div>
+            )) : (
+              <div className="texto-suave">Nenhum item sem devolutiva.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+        <h3 style={{ margin: 0 }}>Todos os encaminhamentos (unidade)</h3>
+        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+          {lista.length ? lista.map((e) => (
+            <div key={e.id} className="card" style={{ padding: 10, borderRadius: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div><b>#{e.id}</b> · {e.destino_nome}</div>
+                <div className="texto-suave">Status: <b>{e.status}</b></div>
+              </div>
+              <div className="texto-suave" style={{ marginTop: 4 }}>
+                Tipo: {e.destino_tipo} · Pessoa: {e.pessoa_id ? `#${e.pessoa_id}` : "—"} · Unidade: {mapaUn.get(e.unidade_id) || e.unidade_id}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <button className="btn btn-secundario" type="button" onClick={() => avancar(e)}>
+                  Avançar (próximo passo)
+                </button>
+                <button className="btn btn-secundario" type="button" onClick={() => marcarDevolutiva(e)}>
+                  Registrar devolutiva
+                </button>
+                <button className="btn btn-secundario" type="button" onClick={() => cancelar(e)}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )) : (
+            <div className="texto-suave">Nenhum encaminhamento nesta unidade.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,121 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+
+
+function ScrollToTopOnRouteChange() {
+  // NÃO usa nano: só corrige a "sensação de layout quebrado" (abre no meio).
+  // - desliga scroll restoration do navegador
+  // - rola para o topo ao trocar rota (/ → /app, /atualizacoes, etc.)
+  const loc = useLocation();
+
+  React.useEffect(() => {
+    try {
+      if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+    } catch (e) {}
+
+    // Se tiver hash (#modulos), deixa o browser cuidar do anchor.
+    if (loc.hash) return;
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [loc.pathname, loc.search]);
+
+  return null;
+}
+
+import App from "./App.jsx";
+import LoginPage from "./LoginPage.jsx";
+import PreLoginPage from "./PreLoginPage.jsx";
+import SuasHubPage from "./SuasHubPage.jsx";
+import AtualizacoesPage from "./AtualizacoesPage.jsx";
+import ModuloPage from "./ModuloPage.jsx";
+
+import "./App.css";
+
+function RootRoutes() {
+  const [usuarioLogado, setUsuarioLogado] = React.useState(null);
+  const [moduloSelecionado, setModuloSelecionado] = React.useState("poprua");
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const token = localStorage.getItem("poprua_token");
+    const userStr = localStorage.getItem("poprua_usuario");
+    if (token && userStr) {
+      try {
+        setUsuarioLogado(JSON.parse(userStr));
+      } catch {
+        localStorage.removeItem("poprua_token");
+        localStorage.removeItem("poprua_usuario");
+        setUsuarioLogado(null);
+      }
+    }
+  }, []);
+
+  function onLogin(usuario) {
+    setUsuarioLogado(usuario);
+    navigate(`/app?mod=${encodeURIComponent(moduloAtual)}`, { replace: true });
+  }
+
+  function onLogout() {
+    localStorage.removeItem("poprua_token");
+    localStorage.removeItem("poprua_usuario");
+    localStorage.removeItem("token");
+    localStorage.removeItem("access_token");
+    setUsuarioLogado(null);
+    navigate("/", { replace: true });
+  }
+
+  const params = new URLSearchParams(location.search);
+  const modFromQuery = params.get("mod");
+  const moduloAtual = (modFromQuery || moduloSelecionado || "poprua").toLowerCase();
+
+  return (
+    <>
+      <ScrollToTopOnRouteChange />
+      <Routes>
+      <Route path="/" element={<PreLoginPage onEntrar={() => navigate("/hub")} />} />
+      <Route path="/atualizacoes" element={<AtualizacoesPage onEntrar={() => navigate("/hub")} />} />
+      <Route path="/modulos/:id" element={<ModuloPage onEntrar={() => navigate("/hub")} />} />
+
+      <Route
+        path="/hub"
+        element={
+          <SuasHubPage
+            onBack={() => navigate("/")}
+            onSelect={(m) => {
+              const mod = (m || "poprua").toLowerCase();
+              setModuloSelecionado(mod);
+              navigate(`/login?mod=${encodeURIComponent(mod)}`);
+            }}
+          />
+        }
+      />
+
+      <Route
+        path="/login"
+        element={<LoginPage onLogin={onLogin} modulo={moduloAtual} onVoltar={() => navigate("/hub")} />}
+      />
+
+      <Route
+        path="/app/*"
+        element={
+          usuarioLogado ? <App usuarioLogado={usuarioLogado} onLogout={onLogout} modulo={moduloAtual} /> : <Navigate to="/" replace />
+        }
+      />
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <RootRoutes />
+    </BrowserRouter>
+  </React.StrictMode>
+);

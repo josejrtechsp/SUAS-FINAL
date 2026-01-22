@@ -1,0 +1,760 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { rmaCollect } from "./domain/rmaCollector.js";
+
+
+function b64ToBlob(b64, contentType = "application/pdf") {
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: contentType });
+}
+
+function isLongField(key) {
+  const k = String(key || "").toLowerCase();
+  return (
+    k.includes("texto") ||
+    k.includes("descricao") ||
+    k.includes("contexto") ||
+    k.includes("motivo") ||
+    k.includes("solicitacao") ||
+    k.includes("encaminh") ||
+    k.includes("justific") ||
+    k.includes("relato") ||
+    k.includes("observ")
+  );
+}
+
+function cleanPlaceholder(v) {
+  const s = (v == null ? "" : String(v)).trim();
+  if (!s) return "";
+  if (s.startsWith("<") && s.endsWith(">")) return "";
+  return s;
+}
+
+async function downloadPdfWithAuth({ apiBase, apiFetch, downloadPath, filename, openInNewTab = true }) {
+  const url = downloadPath.startsWith("http") ? downloadPath : `${apiBase}${downloadPath}`;
+  const r = await apiFetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  const blob = await r.blob();
+  const objUrl = URL.createObjectURL(blob);
+
+  if (openInNewTab) {
+    window.open(objUrl, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(objUrl), 60_000);
+    return;
+  }
+
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename || "documento.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objUrl), 5_000);
+}
+
+export default function TelaCrasDocumentos({ apiBase, apiFetch, usuarioLogado, view = "modelos", onSetView = () => {} }) {
+  const municipioIdLS = localStorage.getItem("cras_municipio_ativo") || "";
+  const municipioId = municipioIdLS || (usuarioLogado?.municipio_id ? String(usuarioLogado.municipio_id) : "");
+
+
+  const viewKey = String(view || "modelos").toLowerCase();
+  const [modelos, setModelos] = useState([]);
+  const [emitidos, setEmitidos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState("");
+  const [msg, setMsg] = useState("");
+
+  // PDF viewer (evita popup bloqueado em iOS/Safari)
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfTitle, setPdfTitle] = useState("");
+  const [pdfFilename, setPdfFilename] = useState("documento.pdf");
+  const pdfUrlRef = useRef("");
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      } catch {}
+    };
+  }, []);
+
+  function setViewer(objUrl, title, filename) {
+    try {
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+    } catch {}
+    pdfUrlRef.current = objUrl;
+    setPdfUrl(objUrl || "");
+    setPdfTitle(title || "");
+    setPdfFilename(filename || "documento.pdf");
+  }
+
+  function clearViewer() {
+    try {
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+    } catch {}
+    pdfUrlRef.current = "";
+    setPdfUrl("");
+    setPdfTitle("");
+    setPdfFilename("documento.pdf");
+  }
+
+  function downloadViewerPdf() {
+    if (!pdfUrl) return;
+    const a = document.createElement("a");
+    a.href = pdfUrl;
+    a.download = pdfFilename || "documento.pdf";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function openViewerFromDownload(downloadPath, filename, title) {
+    const url = downloadPath?.startsWith("http") ? downloadPath : `${apiBase}${downloadPath}`;
+    const r = await apiFetch(url);
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    const objUrl = URL.createObjectURL(blob);
+    setViewer(objUrl, title, filename);
+  }
+
+  const [q, setQ] = useState("");
+  const [tipoFiltro, setTipoFiltro] = useState("");
+
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [showOpcionais, setShowOpcionais] = useState(false);
+
+  const [form, setForm] = useState({
+    assunto: "",
+    destinatario_nome: "",
+    destinatario_cargo: "",
+    destinatario_orgao: "",
+    emissor: "cras",
+    salvar: true,
+    campos: {},
+  });
+
+  const selected = useMemo(() => {
+    return (modelos || []).find((m) => String(m.key) === String(selectedKey)) || null;
+  }, [modelos, selectedKey]);
+
+  const tipos = useMemo(() => {
+    const s = new Set();
+    (modelos || []).forEach((m) => s.add(String(m.tipo || "").trim().toLowerCase()));
+    return Array.from(s).filter(Boolean).sort();
+  }, [modelos]);
+
+  const modelosFiltrados = useMemo(() => {
+    const needle = (q || "").trim().toLowerCase();
+    const tf = (tipoFiltro || "").trim().toLowerCase();
+    return (modelos || []).filter((m) => {
+      if (tf && String(m.tipo || "").toLowerCase() !== tf) return false;
+      if (!needle) return true;
+      const hay = `${m.key} ${m.titulo} ${m.descricao} ${m.tipo}`.toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [modelos, q, tipoFiltro]);
+
+  function buildInitialForm(modelo) {
+    const ex = modelo?.exemplo || {};
+    const campos = {};
+    const all = [...(modelo?.campos_obrigatorios || []), ...(modelo?.campos_opcionais || [])];
+    all.forEach((k) => {
+      // evita placeholders do exemplo
+      const v = ex?.campos?.[k];
+      campos[k] = cleanPlaceholder(v);
+    });
+
+    setForm({
+      assunto: cleanPlaceholder(ex?.assunto) || cleanPlaceholder(modelo?.assunto_padrao) || "",
+      destinatario_nome: "",
+      destinatario_cargo: "",
+      destinatario_orgao: "",
+      emissor: cleanPlaceholder(ex?.emissor) || "cras",
+      salvar: true,
+      campos,
+    });
+  }
+
+  async function loadModelos() {
+    setErro("");
+    setLoading(true);
+    try {
+      const r = await apiFetch(`${apiBase}/documentos/modelos`);
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      // RMA_COLLECT_V1 DOC_EMITIR
+      try {
+        const meta = {
+          tipo: selected?.tipo ?? null,
+          numero: j?.numero ?? null,
+          modelo_id: selected?.id ?? null,
+        };
+        await rmaCollect({
+          apiBase,
+          apiFetch,
+          servico: "DOCUMENTO",
+          acao: "emitir",
+          unidade_id: (typeof unidadeId !== "undefined" && unidadeId) ? Number(unidadeId) : null,
+          pessoa_id: payload?.pessoa_id ?? null,
+          familia_id: payload?.familia_id ?? null,
+          caso_id: payload?.caso_id ?? null,
+          alvo_tipo: "documento",
+          alvo_id: j?.id ?? null,
+          meta,
+        });
+      } catch {}
+      setModelos(Array.isArray(j) ? j : []);
+
+      // auto seleciona o primeiro modelo na primeira carga
+      if (!selectedKey && Array.isArray(j) && j.length) {
+        setSelectedKey(String(j[0].key));
+        buildInitialForm(j[0]);
+      }
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível carregar a biblioteca de documentos.");
+      setModelos([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadEmitidos() {
+    // endpoint opcional (adicionado no patch). Se não existir, não quebra.
+    try {
+      const qs = new URLSearchParams();
+      if (municipioId) qs.set("municipio_id", municipioId);
+      qs.set("limit", "25");
+      const r = await apiFetch(`${apiBase}/documentos/emitidos?${qs.toString()}`);
+      if (!r.ok) {
+        setEmitidos([]);
+        return;
+      }
+      const j = await r.json();
+      setEmitidos(Array.isArray(j) ? j : []);
+    } catch {
+      setEmitidos([]);
+    }
+  }
+
+  useEffect(() => {
+    loadModelos();
+    loadEmitidos();
+    // eslint-disable-next-line
+  }, [municipioId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    buildInitialForm(selected);
+    // eslint-disable-next-line
+  }, [selectedKey]);
+
+  function getCamposForUI(modelo) {
+    const obrig = modelo?.campos_obrigatorios || [];
+    const opc = modelo?.campos_opcionais || [];
+
+    const assinatura = ["assinante_nome", "assinante_cargo", "assinante_orgao"].filter((k) => opc.includes(k) || obrig.includes(k));
+    const normalObrig = obrig.filter((k) => !assinatura.includes(k));
+    const normalOpc = opc.filter((k) => !assinatura.includes(k));
+
+    return { normalObrig, normalOpc, assinatura };
+  }
+
+  function setCampo(k, v) {
+    setForm((s) => ({ ...s, campos: { ...(s.campos || {}), [k]: v } }));
+  }
+
+  function buildPayload({ salvar = true, preview = false }) {
+    if (!selected) return null;
+
+    const { normalObrig, normalOpc, assinatura } = getCamposForUI(selected);
+    const campos = {};
+
+    [...normalObrig, ...(showOpcionais ? normalOpc : []), ...assinatura].forEach((k) => {
+      const v = cleanPlaceholder(form.campos?.[k]);
+      if (v) campos[k] = v;
+    });
+
+    // envia também opcionais preenchidos mesmo se colapsados
+    normalOpc.forEach((k) => {
+      const v = cleanPlaceholder(form.campos?.[k]);
+      if (v) campos[k] = v;
+    });
+
+    assinatura.forEach((k) => {
+      const v = cleanPlaceholder(form.campos?.[k]);
+      if (v) campos[k] = v;
+    });
+
+    return {
+      municipio_id: municipioId ? Number(municipioId) : null,
+      tipo: String(selected.tipo),
+      modelo: String(selected.key),
+      assunto: cleanPlaceholder(form.assunto) || null,
+      destinatario_nome: cleanPlaceholder(form.destinatario_nome) || null,
+      destinatario_cargo: cleanPlaceholder(form.destinatario_cargo) || null,
+      destinatario_orgao: cleanPlaceholder(form.destinatario_orgao) || null,
+      campos,
+      emissor: cleanPlaceholder(form.emissor) || "cras",
+      salvar: !!salvar,
+      retornar_pdf: false,
+      arquivo_nome: preview ? `preview_${selected.key}.pdf` : null,
+    };
+  }
+
+  async function previewPdf() {
+    setMsg("");
+    setErro("");
+    if (!selected) return;
+    try {
+      const payload = buildPayload({ salvar: false, preview: true });
+      if (!payload) return;
+      // preview: salvar=false -> retorna pdf_base64
+      const r = await apiFetch(`${apiBase}/documentos/gerar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, salvar: false, retornar_pdf: false }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      if (!j?.pdf_base64) throw new Error("PDF não retornado");
+      const blob = b64ToBlob(j.pdf_base64);
+      const objUrl = URL.createObjectURL(blob);
+      setViewer(
+        objUrl,
+        `Prévia — ${selected?.titulo || selected?.key || "documento"}`,
+        `preview_${String(selected?.key || "documento")}.pdf`
+      );
+      setMsg("Prévia gerada ✅ (aberta abaixo)");
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao gerar prévia.");
+    }
+  }
+
+  async function emitirPdf() {
+    setMsg("");
+    setErro("");
+    if (!selected) return;
+    try {
+      const payload = buildPayload({ salvar: true, preview: false });
+      if (!payload) return;
+
+      const r = await apiFetch(`${apiBase}/documentos/gerar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, salvar: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const download = j?.download;
+      if (!download) throw new Error("Documento gerado, mas sem link de download");
+
+      const fname = `${String(selected.tipo)}_${String(j?.numero || "").replace(/\s+/g, "_")}.pdf`;
+      await openViewerFromDownload(download, fname, `Documento emitido — ${j?.numero || ""}`);
+      setMsg(`Documento emitido ✅ (${j?.numero || ""}) (aberto abaixo)`);
+      await loadEmitidos();
+    } catch (e) {
+      console.error(e);
+      setErro("Erro ao emitir documento.");
+    }
+  }
+
+  async function baixarEmitido(row, openInNewTab) {
+    try {
+      if (!row?.download) return;
+      const filename = `${row.tipo || "documento"}_${String(row.numero || row.id || "").replace(/\s+/g, "_")}.pdf`;
+
+      // "Abrir" agora exibe o PDF aqui na tela (evita popup bloqueado).
+      if (openInNewTab) {
+        await openViewerFromDownload(row.download, filename, `Documento — ${row.numero || row.id || ""}`);
+        setMsg(`PDF aberto ✅ (${row.numero || ""})`);
+        return;
+      }
+
+      // "Baixar" força download
+      await downloadPdfWithAuth({
+        apiBase,
+        apiFetch,
+        downloadPath: row.download,
+        filename,
+        openInNewTab: false,
+      });
+    } catch (e) {
+      console.error(e);
+      setMsg("Erro ao baixar PDF.");
+    }
+  }
+
+  const camposUI = useMemo(() => getCamposForUI(selected), [selected, showOpcionais]);
+
+  
+  // --- DOCUMENTOS_VIEW_SWITCH_V1 ---
+  if (viewKey === "historico") {
+    return (
+      <div className="layout-1col">
+        {erro ? (
+          <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+            <strong>{erro}</strong>
+          </div>
+        ) : null}
+        {msg ? (
+          <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+            <strong>{msg}</strong>
+          </div>
+        ) : null}
+
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 950, fontSize: 18 }}>Histórico de documentos</div>
+              <div className="texto-suave">Reimpressão rápida e auditoria por número, tipo e assunto.</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn btn-primario" type="button" onClick={() => onSetView("emitir")}>
+                Emitir documento
+              </button>
+              <button className="btn btn-secundario" type="button" onClick={loadEmitidos}>
+                Atualizar
+              </button>
+            </div>
+          </div>
+
+          <div className="texto-suave" style={{ marginTop: 10 }}>
+            Município ativo: <strong>{municipioId || "—"}</strong>
+          </div>
+
+          <div style={{ marginTop: 12, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["#", "Número", "Tipo", "Assunto", "Ações"].map((h) => (
+                    <th
+                      key={h}
+                      style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)", fontSize: 12, color: "rgba(2,6,23,.70)" }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(emitidos || []).map((it, idx) => (
+                  <tr key={it?.id || idx}>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{it?.id ?? "—"}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{it?.numero ?? "—"}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{it?.tipo ?? "—"}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{it?.assunto ?? it?.titulo ?? "—"}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => abrirEmitido(it)}>
+                          Abrir
+                        </button>
+                        <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => baixarEmitido(it)}>
+                          Baixar PDF
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!(emitidos || []).length ? (
+                  <tr>
+                    <td colSpan={5} className="texto-suave" style={{ padding: 10 }}>
+                      Nenhum documento emitido encontrado.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (viewKey === "assinaturas") {
+    return (
+      <div className="layout-1col">
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <div style={{ fontWeight: 950, fontSize: 18 }}>Assinaturas</div>
+          <div className="texto-suave" style={{ marginTop: 6 }}>
+            As assinaturas são campos do documento (nome, cargo, data e identificação). Preencha na emissão e gere uma prévia para conferir antes de salvar.
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            <button className="btn btn-primario" type="button" onClick={() => onSetView("emitir")}>Ir para Emissão</button>
+            <button className="btn btn-secundario" type="button" onClick={() => onSetView("historico")}>Ver Histórico</button>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <div style={{ fontWeight: 900 }}>Dica</div>
+          <div className="texto-suave" style={{ marginTop: 6 }}>
+            Se o modelo não possui campos de assinatura, peça ao administrador para incluir no modelo oficial.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="layout-1col">
+      {erro ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+          <strong>{erro}</strong>
+        </div>
+      ) : null}
+      {msg ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+          <strong>{msg}</strong>
+        </div>
+      ) : null}
+
+      {pdfUrl ? (
+        <div className="card" style={{ padding: 12, borderRadius: 14 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <strong>{pdfTitle || "PDF"}</strong>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={downloadViewerPdf}>
+                Baixar PDF
+              </button>
+              <a
+                className="btn btn-secundario btn-secundario-mini"
+                href={pdfUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Abrir em nova aba
+              </a>
+              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={clearViewer}>
+                Fechar
+              </button>
+            </div>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <iframe
+              title="pdf-viewer"
+              src={pdfUrl}
+              style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12, background: "#fff" }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 950 }}>Biblioteca de documentos</div>
+            <div className="texto-suave">Modelos prontos + emissão em PDF com numeração e verificação.</div>
+          </div>
+          <button className="btn btn-secundario" type="button" onClick={() => { loadModelos(); loadEmitidos(); }}>
+            Atualizar
+          </button>
+        </div>
+
+        <div className="texto-suave" style={{ marginTop: 10 }}>
+          Município ativo: <strong>{municipioId || "—"}</strong>
+        </div>
+
+        {loading ? <div className="texto-suave" style={{ marginTop: 10 }}>Carregando…</div> : null}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12, marginTop: 12 }}>
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          <div style={{ display: "grid", gap: 8 }}>
+            <input className="input" placeholder="Buscar modelo…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <select className="input" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)}>
+              <option value="">Tipo (todos)</option>
+              {tipos.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 520, overflow: "auto" }}>
+            {modelosFiltrados.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                className="card"
+                onClick={() => setSelectedKey(String(m.key))}
+                style={{
+                  textAlign: "left",
+                  padding: 12,
+                  borderRadius: 16,
+                  cursor: "pointer",
+                  border: String(selectedKey) === String(m.key) ? "2px solid rgba(99,102,241,.55)" : "1px solid rgba(2,6,23,.08)",
+                }}
+              >
+                <div style={{ fontWeight: 950 }}>{m.titulo}</div>
+                <div className="texto-suave" style={{ marginTop: 6 }}>
+                  <strong>{m.tipo}</strong> · {m.key}
+                </div>
+                {m.descricao ? <div className="texto-suave" style={{ marginTop: 6 }}>{m.descricao}</div> : null}
+              </button>
+            ))}
+            {!modelosFiltrados.length ? <div className="texto-suave">Sem modelos no filtro.</div> : null}
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 12, borderRadius: 18 }}>
+          {!selected ? (
+            <div className="texto-suave">Selecione um modelo à esquerda.</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 950 }}>{selected.titulo}</div>
+                  <div className="texto-suave">Tipo: <strong>{selected.tipo}</strong> · Modelo: <strong>{selected.key}</strong></div>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button className="btn btn-secundario" type="button" onClick={previewPdf}>
+                    Prévia PDF
+                  </button>
+                  <button className="btn btn-primario" type="button" onClick={emitirPdf}>
+                    Emitir PDF
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+                <input className="input" placeholder="Assunto (opcional)" value={form.assunto} onChange={(e) => setForm((s) => ({ ...s, assunto: e.target.value }))} />
+                <select className="input" value={form.emissor} onChange={(e) => setForm((s) => ({ ...s, emissor: e.target.value }))}>
+                  {[
+                    { k: "cras", l: "Emissor: CRAS" },
+                    { k: "creas", l: "Emissor: CREAS" },
+                    { k: "smas", l: "Emissor: SMAS" },
+                    { k: "gestao", l: "Emissor: Gestão" },
+                    { k: "outros", l: "Emissor: Outros" },
+                  ].map((x) => (
+                    <option key={x.k} value={x.k}>{x.l}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 12, border: "1px solid rgba(2,6,23,.06)" }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>Destinatário (opcional)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <input className="input" placeholder="Nome" value={form.destinatario_nome} onChange={(e) => setForm((s) => ({ ...s, destinatario_nome: e.target.value }))} />
+                  <input className="input" placeholder="Cargo" value={form.destinatario_cargo} onChange={(e) => setForm((s) => ({ ...s, destinatario_cargo: e.target.value }))} />
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <input className="input" placeholder="Órgão / Setor" value={form.destinatario_orgao} onChange={(e) => setForm((s) => ({ ...s, destinatario_orgao: e.target.value }))} />
+                </div>
+              </div>
+
+              <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 12, border: "1px solid rgba(2,6,23,.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900 }}>Campos do modelo</div>
+                  <label className="texto-suave" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input type="checkbox" checked={!!showOpcionais} onChange={(e) => setShowOpcionais(e.target.checked)} />
+                    Mostrar campos opcionais
+                  </label>
+                </div>
+
+                {(camposUI.normalObrig || []).length ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>Obrigatórios</div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(camposUI.normalObrig || []).map((k) => (
+                        <div key={k}>
+                          <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>{k}</div>
+                          {isLongField(k) ? (
+                            <textarea className="input" style={{ minHeight: 90 }} value={form.campos?.[k] || ""} onChange={(e) => setCampo(k, e.target.value)} />
+                          ) : (
+                            <input className="input" value={form.campos?.[k] || ""} onChange={(e) => setCampo(k, e.target.value)} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="texto-suave" style={{ marginTop: 10 }}>Este modelo não exige campos obrigatórios.</div>
+                )}
+
+                {showOpcionais && (camposUI.normalOpc || []).length ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>Opcionais</div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(camposUI.normalOpc || []).map((k) => (
+                        <div key={k}>
+                          <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>{k}</div>
+                          {isLongField(k) ? (
+                            <textarea className="input" style={{ minHeight: 90 }} value={form.campos?.[k] || ""} onChange={(e) => setCampo(k, e.target.value)} />
+                          ) : (
+                            <input className="input" value={form.campos?.[k] || ""} onChange={(e) => setCampo(k, e.target.value)} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {(camposUI.assinatura || []).length ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>Assinatura (opcional)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      {(camposUI.assinatura || []).map((k) => (
+                        <div key={k}>
+                          <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>{k}</div>
+                          <input className="input" value={form.campos?.[k] || ""} onChange={(e) => setCampo(k, e.target.value)} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="texto-suave" style={{ marginTop: 10 }}>
+                Dica: o PDF é baixado via API (com token), por isso o botão abre em nova aba de forma segura.
+              </div>
+
+              <div className="card" style={{ padding: 10, borderRadius: 14, marginTop: 12, border: "1px solid rgba(2,6,23,.06)" }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>Documentos emitidos (recentes)</div>
+                <div style={{ overflow: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        {["#", "Número", "Tipo", "Assunto", "Ações"].map((h) => (
+                          <th key={h} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid rgba(2,6,23,.10)" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(emitidos || []).map((d) => (
+                        <tr key={d.id}>
+                          <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}><strong>#{d.id}</strong></td>
+                          <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{d.numero || "—"}</td>
+                          <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{d.tipo || "—"}</td>
+                          <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>{d.assunto || "—"}</td>
+                          <td style={{ padding: 8, borderBottom: "1px solid rgba(2,6,23,.06)" }}>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => baixarEmitido(d, true)}>Abrir</button>
+                              <button className="btn btn-secundario btn-secundario-mini" type="button" onClick={() => baixarEmitido(d, false)}>Baixar</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {!(emitidos || []).length ? (
+                        <tr><td colSpan={5} className="texto-suave" style={{ padding: 10 }}>Sem documentos listados (ou endpoint não disponível).</td></tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

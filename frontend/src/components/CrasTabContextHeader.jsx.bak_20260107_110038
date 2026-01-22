@@ -1,0 +1,59 @@
+import React from "react";
+
+/**
+ * CRAS · Tab Context Header
+ * - Bloco secundário abaixo do topo padrão (SuasTopHeader)
+ * - Mostra contexto da aba ativa (título + resumo + chips) e atalhos rápidos
+ * - Front-only: não depende de API
+ */
+export default function CrasTabContextHeader({
+  activeTab,
+  tabMeta,
+  onGo,
+}) {
+  const meta = (tabMeta && activeTab && tabMeta[activeTab]) || (tabMeta && tabMeta.default) || {};
+  const title = meta.title || "";
+  const subtitle = meta.subtitle || "";
+  const chips = meta.chips || meta.bullets || [];
+  const actions = meta.actions || [];
+
+  return (
+    <div className="cras-context-wrap">
+      <div className="cras-context-inner">
+        <div className="cras-context-left">
+          <div className="cras-context-kicker">Você está em</div>
+          <div className="cras-context-title">{title}</div>
+          {subtitle ? <div className="cras-context-subtitle">{subtitle}</div> : null}
+
+          {chips?.length ? (
+            <div className="cras-context-chips" aria-label="Resumo da aba">
+              {chips.slice(0, 4).map((c, idx) => (
+                <span key={idx} className="cras-context-chip">
+                  {c}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="cras-context-right" aria-label="Atalhos">
+          {(actions || []).slice(0, 2).map((a, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className={
+                "btn " +
+                (a.kind === "secondary"
+                  ? "btn-secundario btn-secundario-mini"
+                  : "btn-primario btn-primario-mini")
+              }
+              onClick={() => onGo?.(a.tab)}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

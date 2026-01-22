@@ -1,0 +1,156 @@
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import "./SuasHub.css";
+
+const MODULOS = [
+  { id: "cras", label: "CRAS", desc: "Proteção Social Básica", status: "ativo", tone: "purple" },
+  { id: "creas", label: "CREAS", desc: "Proteção Social Especial (PAEFI)", status: "ativo", tone: "blue" },
+  { id: "centro_pop", label: "Centro POP", desc: "Serviços e rotinas do Centro POP", status: "em_breve", tone: "violet" },
+  { id: "poprua", label: "Pop Rua", desc: "Atendimento e gestão de caso", status: "ativo", tone: "cyan" },
+  { id: "gestao", label: "Gestão", desc: "Relatórios, coordenação e governança", status: "em_breve", tone: "indigo" },
+  { id: "terceiro_setor", label: "Terceiro Setor", desc: "OSCs, parcerias e rede", status: "em_breve", tone: "pink" },
+];
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+export default function SuasHubPage({ onBack, onSelect }) {
+  const [toast, setToast] = useState("");
+  const orbitRef = useRef(null);
+  const [radius, setRadius] = useState(300);
+
+  // ordem fixa (Pop Rua embaixo)
+  const modulos = useMemo(() => {
+    const order = ["cras", "creas", "centro_pop", "poprua", "gestao", "terceiro_setor"];
+    const map = new Map(MODULOS.map((m) => [m.id, m]));
+    return order.map((id) => map.get(id)).filter(Boolean);
+  }, []);
+
+  useEffect(() => {
+    const el = orbitRef.current;
+    if (!el) return;
+
+    const compute = () => {
+      const w = el.getBoundingClientRect().width;
+      // raio proporcional + clamp para não colar e não ficar gigante
+      const r = clamp(Math.round(w * 0.36), 230, 360);
+      setRadius(r);
+    };
+
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    window.addEventListener("resize", compute);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, []);
+
+  function handleClick(m) {
+    if (m.status !== "ativo") {
+      setToast("Módulo em breve.");
+      window.clearTimeout(window.__suasToast);
+      window.__suasToast = window.setTimeout(() => setToast(""), 2600);
+      return;
+    }
+    onSelect?.(m.id);
+  }
+
+  function posForIndex(idx, total) {
+    const angle = (idx / total) * Math.PI * 2 - Math.PI / 2; // topo
+    const x = Math.round(radius * Math.cos(angle));
+    const y = Math.round(radius * Math.sin(angle));
+    return { x, y };
+  }
+
+  return (
+    <div className="suas2-root">
+      <div className="suas2-top">
+        <button type="button" className="suas2-back" onClick={() => onBack?.()}>
+          ← Voltar
+        </button>
+
+        <div className="suas2-brand">
+          <img className="suas2-idealLogo" src="/ideal-logo.png" alt="IDEAL" />
+          <div className="suas2-kicker">IDEAL · Plataforma Municipal</div>
+          <div className="suas2-title">Escolha o módulo</div>
+          <div className="suas2-sub">
+            Módulos ativos: <b>Pop Rua</b>, <b>CRAS</b> e <b>CREAS</b>.
+          </div>
+        </div>
+
+        <div className="suas2-right">
+          <img className="suas2-logo" src="/ideal-logo.png" alt="IDEAL" />
+        </div>
+      </div>
+
+      <div className="suas2-wrap">
+        <div className="suas2-grid" aria-hidden="true" />
+        <div className="suas2-glow" aria-hidden="true" />
+
+        {/* ORBIT (desktop/tablet) */}
+        <div className="suas2-orbit" ref={orbitRef}>
+          <div className="suas2-core">
+            <div className="suas2-coreLabel">SUAS</div>
+            <div className="suas2-coreSub">Hub de serviços</div>
+          </div>
+
+          <div className="suas2-ring" aria-hidden="true" />
+
+          {modulos.map((m, idx) => {
+            const pos = posForIndex(idx, modulos.length);
+            const disabled = m.status !== "ativo";
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={"suas2-sat" + (disabled ? " suas2-sat--disabled" : "")}
+                data-status={m.status}
+                data-tone={m.tone}
+                style={{ "--tx": `${pos.x}px`, "--ty": `${pos.y}px` }}
+                onClick={() => handleClick(m)}
+                disabled={disabled}
+              >
+                <div className="suas2-satTop">
+                  <div className="suas2-satLabel">{m.label}</div>
+                  <span className={"suas2-pill " + (disabled ? "suas2-pill--soon" : "suas2-pill--on")}>
+                    {disabled ? "EM BREVE" : "ATIVO"}
+                  </span>
+                </div>
+                <div className="suas2-satDesc">{m.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* LISTA (mobile) */}
+        <div className="suas2-list">
+          {modulos.map((m) => {
+            const disabled = m.status !== "ativo";
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={"suas2-card" + (disabled ? " suas2-card--disabled" : "")}
+                data-status={m.status}
+                data-tone={m.tone}
+                onClick={() => handleClick(m)}
+                disabled={disabled}
+              >
+                <div className="suas2-cardTop">
+                  <div className="suas2-cardLabel">{m.label}</div>
+                  <span className={"suas2-pill " + (disabled ? "suas2-pill--soon" : "suas2-pill--on")}>
+                    {disabled ? "EM BREVE" : "ATIVO"}
+                  </span>
+                </div>
+                <div className="suas2-cardDesc">{m.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {toast ? <div className="suas2-toast">{toast}</div> : null}
+    </div>
+  );
+}

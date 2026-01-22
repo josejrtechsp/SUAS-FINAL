@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sistema Pop Rua</title>
+        <link rel="preload" as="image" href="/ideal-icon.png" fetchpriority="high" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  
+<!-- SCROLL_TOP_FIX_START -->
+<script>
+(function() {
+  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch(e) {}
+
+  function forceTop() {
+    try { window.scrollTo(0,0); } catch(e) {}
+    try {
+      (document.scrollingElement || document.documentElement).scrollTop = 0;
+      document.body.scrollTop = 0;
+    } catch(e) {}
+
+    // tenta também containers comuns
+    try {
+      var els = document.querySelectorAll('main, .app-main, .app-shell, .app-container, .portal3-main, #root');
+      els.forEach(function(el) { if (el && typeof el.scrollTop === 'number') el.scrollTop = 0; });
+    } catch(e) {}
+  }
+
+  // pageshow cobre bfcache (Chrome voltando “no meio”)
+  window.addEventListener('pageshow', function() {
+    setTimeout(forceTop, 0);
+    setTimeout(forceTop, 120);
+  });
+
+  window.addEventListener('load', function() {
+    setTimeout(forceTop, 0);
+    setTimeout(forceTop, 120);
+  });
+})();
+</script>
+<!-- SCROLL_TOP_FIX_END -->
+
+</body>
+</html>

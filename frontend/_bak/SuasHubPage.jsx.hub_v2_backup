@@ -1,0 +1,134 @@
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import "./SuasHub.css";
+
+const MODULOS = [
+  { id: "cras", label: "CRAS", desc: "Proteção Social Básica", status: "em_breve" },
+  { id: "creas", label: "CREAS", desc: "Proteção Social Especial", status: "em_breve" },
+  { id: "centro_pop", label: "Centro POP", desc: "Serviços e rotinas do Centro POP", status: "em_breve" },
+  { id: "poprua", label: "Pop Rua", desc: "Atendimento e gestão de caso", status: "ativo" },
+  { id: "gestao", label: "Gestão", desc: "Relatórios e coordenação", status: "em_breve" },
+  { id: "terceiro_setor", label: "Terceiro Setor", desc: "OSCs, parcerias e rede", status: "em_breve" },
+];
+
+export default function SuasHubPage({ onBack, onSelect }) {
+  const [toast, setToast] = useState("");
+  const orbitRef = useRef(null);
+
+  // Mantém o Pop Rua na posição "de baixo" (mais natural)
+  const modulos = useMemo(() => {
+    const order = ["cras", "creas", "centro_pop", "poprua", "gestao", "terceiro_setor"];
+    const map = new Map(MODULOS.map((m) => [m.id, m]));
+    return order.map((id) => map.get(id)).filter(Boolean);
+  }, []);
+
+  // raio dinâmico = satélites não colam e não estouram em telas largas
+  const [radius, setRadius] = useState(280);
+
+  useEffect(() => {
+    const el = orbitRef.current;
+    if (!el) return;
+
+    const compute = () => {
+      const w = el.getBoundingClientRect().width;
+      // Ajuste fino: clamp para não ficar apertado nem gigante
+      const r = max(190, min(340, w * 0.34));
+      setRadius(r);
+    };
+
+    // helpers sem importar nada
+    const max = (a,b) => (a>b?a:b);
+    const min = (a,b) => (a<b?a:b);
+
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    window.addEventListener("resize", compute);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, []);
+
+  function handleClick(m) {
+    if (m.status !== "ativo") {
+      setToast("Módulo em breve. Por enquanto, apenas Pop Rua está ativo.");
+      window.clearTimeout(window.__suasToast);
+      window.__suasToast = window.setTimeout(() => setToast(""), 2600);
+      return;
+    }
+    onSelect?.(m.id);
+  }
+
+  function posForIndex(idx, total) {
+    const angle = (idx / total) * Math.PI * 2 - Math.PI / 2; // começa no topo
+    const x = Math.round(radius * Math.cos(angle));
+    const y = Math.round(radius * Math.sin(angle));
+    return { x, y };
+  }
+
+  return (
+    <div className="suas-hub-root">
+      <div className="suas-hub-top">
+        <button type="button" className="suas-hub-back" onClick={() => onBack?.()}>
+          ← Voltar
+        </button>
+
+        <div className="suas-hub-brand">
+          <div className="suas-hub-kicker">PORTAL SUAS</div>
+          <div className="suas-hub-title">Escolha o módulo</div>
+          <div className="suas-hub-sub">
+            Apenas <b>Pop Rua</b> está ativo no momento.
+          </div>
+        </div>
+
+        <div className="suas-hub-right" />
+      </div>
+
+      <div className="suas-orbit-wrap">
+        <div className="suas-orbit-grid" aria-hidden="true" />
+
+        <div className="suas-orbit" ref={orbitRef}>
+          <div className="suas-core" aria-label="SUAS">
+            <div className="suas-core-ring" aria-hidden="true" />
+            <div className="suas-core-label">SUAS</div>
+            <div className="suas-core-sub">Hub de serviços</div>
+          </div>
+
+          {modulos.map((m, idx) => {
+            const pos = posForIndex(idx, modulos.length);
+            const disabled = m.status !== "ativo";
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={
+                  "suas-sat" +
+                  (disabled ? " suas-sat-disabled" : "") +
+                  (m.id === "poprua" ? " suas-sat-poprua" : "")
+                }
+                style={{
+                  transform: `translate(-50%, -50%) translate(${pos.x}px, ${pos.y}px)`,
+                }}
+                onClick={() => handleClick(m)}
+                disabled={disabled}
+              >
+                <div className="suas-sat-top">
+                  <div className="suas-sat-label">{m.label}</div>
+                  <span className={"suas-pill " + (disabled ? "suas-pill-soon" : "suas-pill-on")}>
+                    {disabled ? "EM BREVE" : "ATIVO"}
+                  </span>
+                </div>
+                <div className="suas-sat-desc">{m.desc}</div>
+              </button>
+            );
+          })}
+
+          <div className="suas-orbit-lines" aria-hidden="true" />
+        </div>
+      </div>
+
+      {toast ? <div className="suas-toast">{toast}</div> : null}
+    </div>
+  );
+}

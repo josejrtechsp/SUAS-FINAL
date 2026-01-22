@@ -1,0 +1,15 @@
+/* CREAS Layout V5 (local only) */
+.creas-casos-layout{ display:flex; gap:12px; align-items:flex-start; }
+.creas-casos-layout .col-esquerda{ flex:0 0 360px; max-width:360px; }
+.creas-casos-layout .col-direita{ flex:1 1 auto; min-width:0; }
+
+/* Lista mais densa */
+.creas-casos-layout .creas-casos-list .btn{ padding:8px 10px; border-radius:12px; }
+.creas-casos-layout .creas-casos-list .btn .texto-suave{ font-size:12px; }
+
+/* Cabeçalho do caso mais compacto */
+.creas-case-header{ padding:12px 14px; }
+.creas-case-header .card-header-row{ align-items:flex-start; }
+.creas-case-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+.creas-badge{ border:1px solid rgba(0,0,0,.08); background:rgba(0,0,0,.03); padding:4px 8px; border-radius:999px; font-size:12px; font-weight:800; }
+.creas-case-next{ margin-top:6px; display:flex; flex-wrap:wrap; gap:12px; font-size:12px; opacity:.85; }

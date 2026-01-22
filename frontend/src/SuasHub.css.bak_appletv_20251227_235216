@@ -1,0 +1,213 @@
+/* HUB — Split View (lista + preview), identidade IDEAL */
+
+.hubSplit-root{
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 12% 10%, rgba(122,92,255,.14), transparent 55%),
+    radial-gradient(1200px 600px at 88% 18%, rgba(90,140,255,.12), transparent 55%),
+    linear-gradient(180deg, rgba(250,250,252,1), rgba(245,246,250,1));
+  padding: 28px 18px;
+}
+
+.hubSplit-container{
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.hubSplit-top{
+  border-radius: 22px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,.70);
+  border: 1px solid rgba(0,0,0,.06);
+  box-shadow: 0 18px 60px rgba(0,0,0,.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  display:flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hubSplit-brand{
+  display:flex;
+  align-items:center;
+  gap: 12px;
+  min-width: 280px;
+}
+.hubSplit-logo{ width: 120px; height:auto; display:block; }
+
+.hubSplit-title{
+  font-size: 22px;
+  font-weight: 980;
+  line-height: 1.05;
+}
+.hubSplit-sub{
+  opacity: .72;
+  font-weight: 650;
+  margin-top: 4px;
+}
+
+.hubSplit-actions{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content:flex-end;
+}
+
+.hubSplit-btn{
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(255,255,255,.85);
+  font-weight: 950;
+  cursor:pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,.08);
+  white-space: nowrap;
+}
+
+.hubSplit-btnPrimary{
+  border: 1px solid rgba(122,92,255,.25);
+  background: rgba(122,92,255,.95);
+  color: white;
+  box-shadow: 0 18px 50px rgba(122,92,255,.20);
+}
+
+.hubSplit-search{
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(255,255,255,.85);
+  min-width: 260px;
+  width: 340px;
+  outline: none;
+  font-weight: 650;
+}
+
+.hubSplit-body{
+  display:grid;
+  grid-template-columns: 340px 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 980px){
+  .hubSplit-body{ grid-template-columns: 1fr; }
+  .hubSplit-search{ width: 100%; }
+  .hubSplit-logo{ width: 110px; }
+}
+
+/* Lista */
+.hubSplit-panel{
+  border-radius: 26px;
+  padding: 14px;
+  background: rgba(255,255,255,.70);
+  border: 1px solid rgba(0,0,0,.06);
+  box-shadow: 0 18px 60px rgba(0,0,0,.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hubSplit-listTitle{
+  font-weight: 980;
+  margin-bottom: 10px;
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+}
+
+.hubSplit-count{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.75);
+  font-weight: 950;
+  opacity: .9;
+}
+
+.hubSplit-item{
+  border-radius: 18px;
+  padding: 12px;
+  border: 1px solid rgba(0,0,0,.06);
+  background: rgba(255,255,255,.55);
+  cursor:pointer;
+  display:grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.hubSplit-itemActive{
+  border: 1px solid rgba(122,92,255,.28);
+  background: rgba(122,92,255,.08);
+}
+
+.hubSplit-itemTop{
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 10px;
+}
+
+.hubSplit-itemName{ font-weight: 980; }
+.hubSplit-itemDesc{ opacity:.78; font-weight: 650; font-size: 13px; }
+
+.hubSplit-pillOk{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(120,255,180,.16);
+  color: rgba(0,90,60,1);
+  font-weight: 950;
+  white-space: nowrap;
+}
+.hubSplit-pillSoon{
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.70);
+  color: rgba(20,20,30,.55);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+/* Preview */
+.hubSplit-previewTitle{
+  font-size: 26px;
+  font-weight: 980;
+  line-height: 1.05;
+  margin-bottom: 6px;
+}
+.hubSplit-previewLead{
+  opacity:.78;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.hubSplit-previewGrid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 980px){
+  .hubSplit-previewGrid{ grid-template-columns: 1fr; }
+}
+
+.hubSplit-box{
+  border-radius: 20px;
+  padding: 14px;
+  border: 1px solid rgba(0,0,0,.06);
+  background: rgba(255,255,255,.55);
+}
+.hubSplit-boxTitle{ font-weight: 980; margin-bottom: 10px; }
+.hubSplit-bullets{ display:grid; gap: 8px; opacity:.92; }
+.hubSplit-bullets div{ display:flex; gap:10px; }
+
+.hubSplit-ctaRow{
+  margin-top: 14px;
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items:center;
+}

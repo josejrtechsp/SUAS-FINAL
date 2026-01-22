@@ -1,0 +1,143 @@
+import React, { useMemo, useState } from "react";
+import "./SuasHub.css";
+
+const MODS = [
+  { id: "poprua", name: "Pop Rua", desc: "Atendimento e gestão de caso", status: "ativo",
+    bullets: ["Atendimento com histórico", "Fluxo e rastreabilidade", "Rede e encaminhamentos"] },
+  { id: "cras", name: "CRAS", desc: "Proteção Social Básica", status: "ativo",
+    bullets: ["Triagem e PAIF/SCFV", "CadÚnico e programas", "Casos e pendências"] },
+  { id: "creas", name: "CREAS", desc: "Proteção Social Especial (PAEFI)", status: "ativo",
+    bullets: ["Caso com 'o que fazer agora'", "Encaminhamentos com prazo", "Pendências/SLA e auditoria"] },
+
+  { id: "ouvidoria", name: "Ouvidoria", desc: "Demandas do cidadão com SLA", status: "breve",
+    bullets: ["Fila por secretaria", "Mapa e reincidência", "Prazo e retorno ao cidadão"] },
+  { id: "projetos", name: "Projetos & Captação", desc: "Emendas, convênios e execução", status: "breve",
+    bullets: ["Plano de trabalho e orçamento", "Evidências e checklist", "Monitoramento por etapa"] },
+  { id: "terceiro_setor", name: "Terceiro Setor", desc: "OSCs, parcerias e prestação de contas", status: "breve",
+    bullets: ["Chamamentos e termos", "Execução e evidências", "Relatórios e auditoria"] },
+];
+
+export default function SuasHubPage() {
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState("poprua");
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return MODS;
+    return MODS.filter(m =>
+      (m.name + " " + m.desc).toLowerCase().includes(s)
+    );
+  }, [q]);
+
+  const selected = filtered.find(m => m.id === sel) || filtered[0] || MODS[0];
+
+  const goHome = () => {
+    const u = new URL(window.location.href);
+    u.searchParams.delete("mod");
+    u.searchParams.delete("hub");
+    u.searchParams.delete("artigo");
+    window.location.href = u.pathname + u.search;
+  };
+
+  const entrar = () => {
+    if (selected.status !== "ativo") return;
+    window.location.href = "/app?mod=" + selected.id;
+  };
+
+  return (
+    <div className="hubSplit-root">
+      <div className="hubSplit-container">
+
+        <div className="hubSplit-top">
+          <div className="hubSplit-brand">
+            <img className="hubSplit-logo" src="/ideal-logo.png" alt="IDEAL" />
+            <div>
+              <div className="hubSplit-title">Escolha o módulo</div>
+              <div className="hubSplit-sub">Ativos: Pop Rua, CRAS e CREAS.</div>
+            </div>
+          </div>
+
+          <div className="hubSplit-actions">
+            <input
+              className="hubSplit-search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar módulo…"
+            />
+            <button className="hubSplit-btn" onClick={goHome}>← Voltar</button>
+            <button className="hubSplit-btn hubSplit-btnPrimary" onClick={() => (window.location.href="/app?mod=poprua")}>
+              Entrar no sistema
+            </button>
+          </div>
+        </div>
+
+        <div className="hubSplit-body">
+          {/* LISTA */}
+          <div className="hubSplit-panel">
+            <div className="hubSplit-listTitle">
+              <span>Módulos</span>
+              <span className="hubSplit-count">{filtered.length}</span>
+            </div>
+
+            {filtered.map((m) => (
+              <div
+                key={m.id}
+                className={"hubSplit-item " + (selected?.id === m.id ? "hubSplit-itemActive" : "")}
+                onClick={() => setSel(m.id)}
+              >
+                <div className="hubSplit-itemTop">
+                  <div className="hubSplit-itemName">{m.name}</div>
+                  {m.status === "ativo" ? (
+                    <span className="hubSplit-pillOk">ATIVO</span>
+                  ) : (
+                    <span className="hubSplit-pillSoon">EM BREVE</span>
+                  )}
+                </div>
+                <div className="hubSplit-itemDesc">{m.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* PREVIEW */}
+          <div className="hubSplit-panel">
+            <div className="hubSplit-previewTitle">{selected.name}</div>
+            <div className="hubSplit-previewLead">{selected.desc}</div>
+
+            <div className="hubSplit-previewGrid">
+              <div className="hubSplit-box">
+                <div className="hubSplit-boxTitle">O que dá para fazer</div>
+                <div className="hubSplit-bullets">
+                  {selected.bullets.map((b, i) => (
+                    <div key={i}><span aria-hidden="true">✅</span><span>{b}</span></div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="hubSplit-box">
+                <div className="hubSplit-boxTitle">Como entra</div>
+                <div className="hubSplit-bullets">
+                  <div><span aria-hidden="true">🧩</span><span>Escolha o módulo e entre no painel</span></div>
+                  <div><span aria-hidden="true">🔒</span><span>Perfil e LGPD por função</span></div>
+                  <div><span aria-hidden="true">🧾</span><span>Rastreabilidade e auditoria</span></div>
+                </div>
+
+                <div className="hubSplit-ctaRow">
+                  <button
+                    className={"hubSplit-btn " + (selected.status === "ativo" ? "hubSplit-btnPrimary" : "")}
+                    onClick={entrar}
+                    disabled={selected.status !== "ativo"}
+                    style={{ opacity: selected.status === "ativo" ? 1 : .6, cursor: selected.status === "ativo" ? "pointer" : "not-allowed" }}
+                  >
+                    {selected.status === "ativo" ? "Entrar" : "Em breve"}
+                  </button>
+                  <button className="hubSplit-btn" onClick={goHome}>Voltar ao portal</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}

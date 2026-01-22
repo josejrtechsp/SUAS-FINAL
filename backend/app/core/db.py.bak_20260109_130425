@@ -1,0 +1,213 @@
+# app/core/db.py
+import os
+import importlib
+from typing import Generator
+
+from sqlmodel import SQLModel, Session, create_engine
+
+# ============================
+# Config do banco
+# ============================
+DATABASE_URL = os.getenv("POPRUA_DATABASE_URL", "sqlite:///./poprua.db")
+
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=connect_args,
+)
+
+# ============================
+# IMPORTAÇÃO CONTROLADA DE MODELS (SEM VARREDURA)
+# ============================
+def _importar_models() -> None:
+    """
+    Aqui é propositalmente CONTROLADO:
+    - NÃO varre a pasta app/models
+    - Importa apenas módulos necessários
+    - EVITA importar caso_etapa_registro.py (duplicava casopoprua)
+    """
+
+    modules = [
+        "app.models.rma_meta",
+        "app.models.rma_evento",
+        # base do sistema
+        "app.models.usuario",
+        "app.models.municipio",
+        "app.models.pessoa",          # se existir no seu projeto
+        "app.models.pessoarua",       # se existir no seu projeto
+
+        "app.models.atendimento",
+        "app.models.acolhimentos",
+        "app.models.saude",
+        "app.models.saude_intersetorial",
+
+        # ✅ CASO (único model da tabela casopoprua)
+        "app.models.caso_pop_rua",
+
+        # ✅ Encaminhamentos
+        "app.models.encaminhamentos",
+
+        # ✅ SAÚDE (Fluxo operacional dentro do caso)
+        "app.models.saude_fluxo",
+
+        # ✅ Protocolo do caso (B1)
+        "app.models.protocolo",
+
+        # ✅ Linha de metrô: registros auditáveis de etapa (B1.5)
+        "app.models.linha_metro_registro",
+                "app.models.cras_encaminhamento",
+"app.models.cras_paif",
+        "app.models.cras_unidade",
+        "app.models.cras_triagem",
+
+        # ✅ CRAS (Cadastros SUAS + Casos + Programas)
+        "app.models.pessoa_suas",
+        "app.models.pessoa_identidade_link",
+        "app.models.familia_suas",
+        "app.models.caso_cras",
+        "app.models.cras_programa",
+
+    
+        # ✅ CRAS CadÚnico
+        "app.models.cadunico_precadastro",
+
+        # ✅ CRAS PIA/PAIF (caso)
+        "app.models.cras_pia",
+
+        # ✅ CRAS SCFV
+        "app.models.scfv",
+
+        # ✅ Ficha Anexos
+        "app.models.ficha_anexo",
+
+        # ✅ Ficha Eventos (auditoria)
+        "app.models.ficha_evento",
+
+        # ✅ CREAS (atendimento especializado) - opcional
+        "app.models.creas_unidade",
+        "app.models.creas_caso",
+
+        # ✅ Terceiro Setor (OSC / Lei 13.019) - MVP
+        "app.models.osc",
+
+        # ✅ Config (SLA / Metas)
+        "app.models.sla_regra",
+        "app.models.meta_kpi",
+
+        # ✅ Documentos / Branding
+        "app.models.municipio_branding",
+        "app.models.documento_template",
+        "app.models.documento_emitido",
+        "app.models.documento_config",
+        "app.models.documento_sequencia",        "app.models.suas_encaminhamento",
+
+]
+
+    for m in modules:
+        try:
+            importlib.import_module(m)
+        except ModuleNotFoundError:
+            # ok: não existe no seu projeto
+            continue
+
+
+def init_db() -> None:
+    _importar_models()
+    SQLModel.metadata.create_all(engine)
+
+    # PERF: cria índices idempotentes (principalmente SQLite em DEV)
+    try:
+        from app.core.db_indexes import ensure_indexes
+        ensure_indexes(engine, DATABASE_URL)
+    except Exception:
+        pass
+
+    # SQLite não altera esquema automaticamente em create_all.
+    # Então garantimos colunas novas (B1/B2) com ALTER TABLE quando necessário.
+    if DATABASE_URL.startswith("sqlite"):
+        _ensure_sqlite_columns()
+
+
+def _ensure_sqlite_columns() -> None:
+    """Adiciona colunas novas em tabelas existentes (SQLite) de forma idempotente."""
+    from sqlalchemy import text
+
+    # tabela de pessoas
+    pessoa_cols = {
+        # complementos
+        "estado_civil": "TEXT",
+        "apelido": "TEXT",
+        "telefone": "TEXT",
+        "whatsapp": "TEXT",
+        "contato_referencia_nome": "TEXT",
+        "contato_referencia_telefone": "TEXT",
+        "permanencia_rua": "TEXT",
+        "pontos_circulacao": "TEXT",
+        "horario_mais_encontrado": "TEXT",
+        "motivo_rua": "TEXT",
+        "escolaridade": "TEXT",
+        "ocupacao": "TEXT",
+        "interesses_reinsercao": "TEXT",
+        "cadunico_status": "TEXT",
+        "documentos_pendentes": "TEXT",
+        "fonte_renda": "TEXT",
+        "violencia_risco": "TEXT",
+        "ameaca_territorio": "TEXT",
+        "gestante_status": "TEXT",
+        "protecao_imediata": "TEXT",
+        "interesse_acolhimento": "TEXT",
+        "moradia_recente": "TEXT",
+        "tentativas_saida_rua": "TEXT",
+        "dependencia_quimica": "TEXT",
+    }
+
+    def _cols(conn, table: str) -> set:
+        existing = set()
+        res = conn.execute(text(f"PRAGMA table_info('{table}')"))
+        for row in res.fetchall():
+            existing.add(row[1])
+        return existing
+
+    with engine.begin() as conn:
+        # ---- pessoarua (complementos) ----
+        try:
+            existing = _cols(conn, "pessoarua")
+        except Exception:
+            existing = set()
+
+        for col, ddl_type in pessoa_cols.items():
+            if col in existing:
+                continue
+            try:
+                conn.execute(text(f"ALTER TABLE pessoarua ADD COLUMN {col} {ddl_type}"))
+            except Exception:
+                pass
+
+        # ---- paif_acompanhamento (ponte SUAS + caso) ----
+        try:
+            existing = _cols(conn, "paif_acompanhamento")
+            if "pessoa_suas_id" not in existing:
+                conn.execute(text("ALTER TABLE paif_acompanhamento ADD COLUMN pessoa_suas_id INTEGER"))
+            if "caso_id" not in existing:
+                conn.execute(text("ALTER TABLE paif_acompanhamento ADD COLUMN caso_id INTEGER"))
+        except Exception:
+            pass
+
+        # ---- cras_triagem (ponte SUAS + caso) ----
+        try:
+            existing = _cols(conn, "cras_triagem")
+            if "pessoa_suas_id" not in existing:
+                conn.execute(text("ALTER TABLE cras_triagem ADD COLUMN pessoa_suas_id INTEGER"))
+            if "caso_id" not in existing:
+                conn.execute(text("ALTER TABLE cras_triagem ADD COLUMN caso_id INTEGER"))
+        except Exception:
+            pass
+
+
+def get_session() -> Generator[Session, None, None]:
+    with Session(engine) as session:
+        yield session

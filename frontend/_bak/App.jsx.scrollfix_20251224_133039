@@ -1,0 +1,3351 @@
+import { API_BASE } from "./config";
+// src/App.jsx
+import { useEffect, useMemo, useState } from "react";
+import "./App.css";
+
+import CanalComunicacao from "./CanalComunicacao";
+import TelaAcolhimentosPessoa from "./TelaAcolhimentosPessoa";
+import TelaFamiliaBeneficios from "./TelaFamiliaBeneficios";
+import TelaInicialSistema from "./TelaInicialSistema";
+import TelaFichaPessoa from "./TelaFichaPessoa";
+import TelaEncaminhamentoIntermunicipal from "./TelaEncaminhamentoIntermunicipal";
+import TelaEncaminhamentos from "./TelaEncaminhamentos";
+import TelaSaudeIntersetorial from "./TelaSaudeIntersetorial";
+import TelaProtocoloCaso from "./TelaProtocoloCaso";
+import TelaGuiaSUAS from "./TelaGuiaSUAS";
+import PageHero from "./components/PageHero";
+import TelaCras from "./TelaCras";
+
+
+/* ===============================
+   AUTH HELPERS (token no localStorage)
+   =============================== */
+function getToken() {
+  const t = localStorage.getItem("poprua_token");
+  return t || localStorage.getItem("access_token") || "";
+}
+
+function authHeaders(extra = {}) {
+  const token = getToken();
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/**
+ * Converte IDs de forma robusta:
+ * - number, string numérica
+ * - objeto com {id}
+ * - evento do React com target.value / dataset
+ */
+function toIntId(value) {
+  if (value == null) return null;
+
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  if (typeof value === "object") {
+    if (value?.id != null) return toIntId(value.id);
+    const t = value?.target || value?.currentTarget;
+    const fromDataset =
+      t?.dataset?.casoId || t?.dataset?.id || t?.getAttribute?.("data-caso-id");
+    const fromValue = t?.value;
+    const maybe = fromDataset ?? fromValue;
+    return toIntId(maybe);
+  }
+
+  return null;
+}
+
+function App({onLogout, usuarioLogado, modulo}) {
+  // ===== MÓDULO ATIVO (poprua / cras) =====
+  const moduleFromQuery = (() => {
+    try { return new URLSearchParams(window.location.search).get("mod"); }
+    catch (e) { return null; }
+  })();
+
+  const activeModule = (modulo || moduleFromQuery || localStorage.getItem("active_module") || "poprua").toLowerCase();
+
+  useEffect(() => {
+    try { localStorage.setItem("active_module", activeModule); } catch (e) {}
+  }, [activeModule]);
+
+  const produtoTitulo =
+    activeModule === "cras" ? "Sistema CRAS" : "Sistema Pop Rua";
+
+  const produtoSubtitulo =
+    activeModule === "cras"
+      ? "Triagem, PAIF, SCFV e rede com LGPD aplicada"
+      : "Gestão integrada de atendimentos à população em situação de rua";
+
+
+
+  const [activeTab, setActiveTab] = useState(activeModule === "cras" ? "cras" : "inicio");
+// Sempre volta pro topo ao trocar de aba (evita 'parecer desconfigurado')
+const [perfilAtivo, setPerfilAtivo] = useState("operador");
+
+  // HUBS (sub-abas internas)
+  const [atendimentoView, setAtendimentoView] = useState("casos"); // casos | ficha
+  const [pessoasView, setPessoasView] = useState("ficha"); // ficha | cadastro
+
+  // MUNICÍPIOS
+  const [municipios, setMunicipios] = useState([]);
+  const [municipioAtivoId, setMunicipioAtivoId] = useState(null);
+
+  // DADOS PRINCIPAIS
+  const [pessoas, setPessoas] = useState([]);
+  const [casos, setCasos] = useState([]);
+  const [selectedCaso, setSelectedCaso] = useState(null);
+  const [linhaMetro, setLinhaMetro] = useState(null);
+  const [atendimentos, setAtendimentos] = useState([]);
+
+  // NOVO CASO
+  const [pessoaIdForm, setPessoaIdForm] = useState("");
+  const [obsIniciaisForm, setObsIniciaisForm] = useState("");
+
+  // FICHA DA PESSOA (pré-seleção ao abrir a aba)
+  const [fichaPessoaInicialId, setFichaPessoaInicialId] = useState("");
+
+  // FICHA (ATENDIMENTO)
+  const [fichaPessoaId, setFichaPessoaId] = useState("");
+  const [fichaCasoId, setFichaCasoId] = useState("");
+  const [fichaDataHora, setFichaDataHora] = useState("");
+  const [fichaLocal, setFichaLocal] = useState("");
+  const [fichaTipo, setFichaTipo] = useState("abordagem_rua");
+  const [fichaEquipamento, setFichaEquipamento] = useState("");
+  const [fichaResultado, setFichaResultado] = useState(
+    "acompanhamento_continuado"
+  );
+  const [fichaDescricao, setFichaDescricao] = useState("");
+
+  // CADASTRO
+  const [cadNomeSocial, setCadNomeSocial] = useState("");
+  const [cadNomeCivil, setCadNomeCivil] = useState("");
+  const [cadCPF, setCadCPF] = useState("");
+  const [cadMunicipioOrigemId, setCadMunicipioOrigemId] = useState("");
+  const [cadTempoRua, setCadTempoRua] = useState("");
+  const [cadLocalReferencia, setCadLocalReferencia] = useState("");
+  const [cadDataNascimento, setCadDataNascimento] = useState("");
+  const [cadGenero, setCadGenero] = useState("");
+  const [cadEstadoCivil, setCadEstadoCivil] = useState("");
+  const [cadObservacoesGerais, setCadObservacoesGerais] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState("");
+
+  // ✅ mostrar/ocultar casos arquivados (para reverter arquivamento)
+  const [incluirInativosCasos, setIncluirInativosCasos] = useState(false);
+
+  // ✅ MODAL ARQUIVAR/DESARQUIVAR (substitui prompt do navegador)
+  const [modalArquivarOpen, setModalArquivarOpen] = useState(false);
+  const [modalArquivarMotivo, setModalArquivarMotivo] = useState("");
+  const [modalArquivarErro, setModalArquivarErro] = useState("");
+
+  // ✅ pré-seleção do caso na aba Saúde (intersetorial)
+  const [saudeCasoInicialId, setSaudeCasoInicialId] = useState("");
+
+  // PERFIS MUNICIPAIS (ficam presos ao município do usuário)
+  const isPerfilMunicipal = useMemo(() => {
+    return perfilAtivo === "operador" || perfilAtivo === "coord_municipal";
+  }, [perfilAtivo]);
+
+  // municipal: municipio_id vem do usuário; admin/consórcio: escolhe no topo
+  const municipioIdAtual = useMemo(() => {
+    return isPerfilMunicipal
+      ? usuarioLogado?.municipio_id ?? null
+      : municipioAtivoId ?? null;
+  }, [isPerfilMunicipal, usuarioLogado, municipioAtivoId]);
+
+  const municipioAtivoNome = useMemo(() => {
+    if (!municipioIdAtual) return "";
+    const m = municipios.find((x) => Number(x.id) === Number(municipioIdAtual));
+    return m?.nome || m?.nome_municipio || "Município";
+  }, [municipios, municipioIdAtual]);
+
+  /* ===============================
+     API FETCH com auth + auto logout (401)
+     =============================== */
+  async function apiFetch(url, options = {}) {
+    if (localStorage.getItem("token")) localStorage.removeItem("token");
+
+    const merged = {
+      ...options,
+      headers: authHeaders(options.headers || {}),
+    };
+
+    const res = await fetch(url, merged);
+    if (res.status === 401 && typeof onLogout === "function") onLogout();
+    return res;
+  }
+
+  /* =========================================================
+     CONTROLE DE ABAS POR PERFIL (LGPD / hierarquia)
+     ========================================================= */
+  function podeVerAba(tab) {
+    const p = (perfilAtivo || "").toLowerCase();
+
+    if (p === "admin" || p === "gestor_consorcio") return true;
+
+    if (p === "coord_municipal") {
+      return [
+        "inicio",
+        "atendimento",
+        "pessoas",
+        "cras",
+        "familia",
+        "encaminhamentos",
+        "encaminhamento_intermunicipal",
+        "dashboard",
+        "regional",
+        "protocolo",
+        "saude_intersetorial",
+        "guia_suas",
+      ].includes(tab);
+  }
+
+    // Para operador, garantir que "saude_intersetorial" está incluído:
+    return [
+      "inicio",
+      "atendimento",
+      "pessoas",
+      "saude_intersetorial",
+      "familia",
+      "encaminhamentos",
+      "encaminhamento_intermunicipal",
+      "protocolo",
+      "guia_suas",
+    ].includes(tab);
+  }
+
+  function abrirFichaPessoa(pessoaId) {
+    const id =
+      pessoaId != null && String(pessoaId).trim() !== "" ? String(pessoaId) : "";
+    setFichaPessoaInicialId(id);
+    setPessoasView("ficha");
+    setActiveTab("pessoas");
+  }
+
+  function abrirCadastroPessoa() {
+    setPessoasView("cadastro");
+    setActiveTab("pessoas");
+  }
+
+  function abrirFichaAtendimento(pessoaId, casoId) {
+    const pid = pessoaId != null ? String(pessoaId) : "";
+    const cid = casoId != null ? String(casoId) : "";
+    setFichaPessoaId(pid);
+    setFichaCasoId(cid);
+    setAtendimentoView("ficha");
+    setActiveTab("atendimento");
+    preencherDataHoraPadrao();
+  }
+
+  function abrirSaudeIntersetorial(casoId) {
+    const id = casoId != null && String(casoId).trim() !== "" ? String(casoId) : "";
+    setSaudeCasoInicialId(id);
+    setActiveTab("saude_intersetorial");
+  }
+
+  function abrirEncIntermunicipal() {
+    setActiveTab("encaminhamento_intermunicipal");
+  }
+  function voltarParaEncaminhamentos() {
+    setActiveTab("encaminhamentos");
+  }
+
+  const mainClass = useMemo(() => {
+    return activeTab === "atendimento" && atendimentoView === "casos"
+      ? "app-main"
+      : "app-main-1col";
+  }, [activeTab, atendimentoView]);
+
+  useEffect(() => {
+    if (!podeVerAba(activeTab)) setActiveTab("inicio");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perfilAtivo]);
+
+  /* =========================================================
+     PERFIL
+     ========================================================= */
+  useEffect(() => {
+    if (!usuarioLogado) return;
+    const perfil = (usuarioLogado.perfil || "operador").toLowerCase();
+    setPerfilAtivo(perfil);
+  }, [usuarioLogado]);
+
+  /* =========================================================
+     MUNICÍPIOS
+     ========================================================= */
+  useEffect(() => {
+    if (!usuarioLogado) return;
+    carregarMunicipios();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuarioLogado]);
+
+  // admin/consórcio: define município default (1º) assim que carregar
+  useEffect(() => {
+    if (!usuarioLogado) return;
+    if (isPerfilMunicipal) return;
+    if (municipioAtivoId != null) return;
+    if (!municipios || municipios.length === 0) return;
+    setMunicipioAtivoId(Number(municipios[0].id));
+  }, [usuarioLogado, isPerfilMunicipal, municipios, municipioAtivoId]);
+
+  /* =========================================================
+     PESSOAS / CASOS (APÓS LOGIN)
+     ========================================================= */
+  useEffect(() => {
+    if (!usuarioLogado) return;
+    if (!isPerfilMunicipal && !municipioIdAtual) return;
+
+    carregarPessoas();
+    carregarCasos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuarioLogado, isPerfilMunicipal, municipioIdAtual, incluirInativosCasos]);
+
+  async function carregarPessoas() {
+    try {
+      const res = await apiFetch(`${API_BASE}/pessoas/`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setPessoas(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível carregar a lista de pessoas.");
+    }
+  }
+
+  async function carregarCasos(preferSelectId = null) {
+    try {
+      const url = incluirInativosCasos
+        ? `${API_BASE}/casos/?incluir_inativos=true`
+        : `${API_BASE}/casos/`;
+
+      const res = await apiFetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      const lista = Array.isArray(data) ? data : [];
+
+      const normalizados = lista
+        .map((c) => ({
+          ...c,
+          id: toIntId(c?.id),
+          pessoa_id: toIntId(c?.pessoa_id),
+          municipio_id: toIntId(c?.municipio_id),
+          // importante: manter booleano real (não “normalizar” pra true)
+          ativo: c?.ativo !== false,
+        }))
+        .filter((c) => c.id != null);
+
+      setCasos(normalizados);
+
+      if (normalizados.length === 0) {
+        setSelectedCaso(null);
+        setLinhaMetro(null);
+        setAtendimentos([]);
+        return;
+      }
+
+      const preferId = toIntId(preferSelectId);
+      const selId = toIntId(selectedCaso?.id);
+
+      const alvo =
+        (preferId ? normalizados.find((c) => c.id === preferId) : null) ||
+        (selId ? normalizados.find((c) => c.id === selId) : null) ||
+        normalizados[0];
+
+      if (alvo) await selecionarCaso(alvo);
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível carregar a lista de casos.");
+    }
+  }
+
+  async function carregarMunicipios() {
+    try {
+      const res = await apiFetch(`${API_BASE}/municipios/`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMunicipios(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Erro ao carregar municípios:", e);
+    }
+  }
+
+  /* =========================================================
+     FILTRO VISUAL (extra segurança no front)
+     ========================================================= */
+  const pessoasVisiveis = useMemo(() => {
+    if (!isPerfilMunicipal || !municipioIdAtual) return pessoas;
+    return pessoas.filter((p) => {
+      const mid =
+        p.municipio_id ??
+        p.municipioOrigemId ??
+        p.municipio_origem_id ??
+        null;
+      if (mid == null) return true;
+      return Number(mid) === Number(municipioIdAtual);
+    });
+  }, [pessoas, isPerfilMunicipal, municipioIdAtual]);
+
+  const casosVisiveis = useMemo(() => {
+    if (!isPerfilMunicipal || !municipioIdAtual) return casos;
+    return casos.filter((c) => {
+      const mid = c.municipio_id ?? c.municipioId ?? null;
+      if (mid == null) return true;
+      return Number(mid) === Number(municipioIdAtual);
+    });
+  }, [casos, isPerfilMunicipal, municipioIdAtual]);
+
+  // ------------- CRIAR NOVO CASO -------------
+  async function criarCaso(e) {
+    e.preventDefault();
+    setErro("");
+
+    if (!pessoaIdForm) {
+      setErro("Informe a pessoa para abrir o caso.");
+      return;
+    }
+
+    if (!municipioIdAtual) {
+      setErro("Não foi possível identificar o município para abrir o caso.");
+      return;
+    }
+
+    const body = {
+      pessoa_id: Number(pessoaIdForm),
+      municipio_id: Number(municipioIdAtual),
+      observacoes_iniciais: obsIniciaisForm || null,
+      observacoes_gerais: null,
+    };
+
+    try {
+      setLoading(true);
+
+      const res = await apiFetch(`${API_BASE}/casos/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) msg = JSON.stringify(errJson.detail);
+        } catch {
+          const txt = await res.text().catch(() => "");
+          if (txt) msg = txt;
+        }
+        throw new Error(msg);
+      }
+
+      const novoCasoRaw = await res.json();
+
+      const novoId = toIntId(
+        novoCasoRaw?.id ?? novoCasoRaw?.caso_id ?? novoCasoRaw?.casoId
+      );
+      if (!novoId) {
+        await carregarCasos();
+        setErro(
+          "Caso criado, mas o servidor não retornou um ID válido. Clique em Atualizar casos."
+        );
+        return;
+      }
+
+      const novoCaso = {
+        ...novoCasoRaw,
+        id: novoId,
+        pessoa_id: toIntId(novoCasoRaw?.pessoa_id ?? novoCasoRaw?.pessoaId),
+        municipio_id: toIntId(
+          novoCasoRaw?.municipio_id ?? novoCasoRaw?.municipioId
+        ),
+        ativo: novoCasoRaw?.ativo !== false,
+      };
+
+      setCasos((lista) => [
+        novoCaso,
+        ...lista.filter((c) => toIntId(c?.id) !== novoId),
+      ]);
+
+      setPessoaIdForm("");
+      setObsIniciaisForm("");
+
+      await selecionarCaso(novoCaso);
+      await carregarCasos(novoId);
+    } catch (e2) {
+      console.error(e2);
+      setErro(e2.message || "Erro ao criar caso.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ------------- SELECIONAR CASO -------------
+  async function selecionarCaso(casoLike) {
+    const casoId = toIntId(casoLike?.id ?? casoLike);
+
+    if (!casoId) {
+      console.warn("selecionarCaso: casoId inválido:", casoLike);
+      setErro("Caso inválido. Clique em 'Atualizar casos'.");
+      setSelectedCaso(null);
+      setLinhaMetro(null);
+      setAtendimentos([]);
+      return;
+    }
+
+    const casoObj =
+      typeof casoLike === "object" && casoLike?.id != null
+        ? casoLike
+        : (casos || []).find((c) => toIntId(c?.id) === casoId) || null;
+
+    if (!casoObj) {
+      console.warn("selecionarCaso: não encontrei o caso na lista:", casoId);
+      setErro("Caso não encontrado na lista. Clique em 'Atualizar casos'.");
+      setSelectedCaso(null);
+      setLinhaMetro(null);
+      setAtendimentos([]);
+      return;
+    }
+
+    const casoNormalizado = {
+      ...casoObj,
+      id: toIntId(casoObj?.id) ?? casoId,
+      pessoa_id: toIntId(casoObj?.pessoa_id),
+      municipio_id: toIntId(casoObj?.municipio_id),
+      ativo: casoObj?.ativo !== false,
+    };
+
+    setErro("");
+    setSelectedCaso(casoNormalizado);
+
+    const pessoaId = toIntId(casoNormalizado?.pessoa_id);
+
+    const results = await Promise.allSettled([
+      carregarLinhaMetro(casoId),
+      pessoaId ? carregarAtendimentosDaPessoa(pessoaId) : Promise.resolve(),
+    ]);
+
+    if (results[0].status === "rejected") {
+      setErro(
+        results[0].reason?.message || "Falha ao carregar a linha do metrô."
+      );
+    }
+  }
+
+  async function carregarLinhaMetro(casoIdLike) {
+    const casoId = toIntId(casoIdLike);
+
+    if (!casoId) {
+      setLinhaMetro(null);
+      throw new Error(
+        "Não foi possível identificar o caso para carregar a linha do metrô."
+      );
+    }
+
+    const res = await apiFetch(`${API_BASE}/casos/${casoId}/linha-metro`);
+
+    if (!res.ok) {
+      let detalhe = "";
+      try {
+        const j = await res.json();
+        detalhe = j?.detail ? ` ${JSON.stringify(j.detail)}` : "";
+      } catch {
+        const txt = await res.text().catch(() => "");
+        detalhe = txt ? ` ${txt}` : "";
+      }
+
+      setLinhaMetro(null);
+      throw new Error(`Linha do metrô: HTTP ${res.status}.${detalhe}`);
+    }
+
+    const data = await res.json();
+    setLinhaMetro(data);
+    return true;
+  }
+
+  async function carregarAtendimentosDaPessoa(pessoaIdLike) {
+    const pessoaId = toIntId(pessoaIdLike);
+    if (!pessoaId) {
+      setAtendimentos([]);
+      return true;
+    }
+
+    const res = await apiFetch(`${API_BASE}/pessoas/${pessoaId}/atendimentos`);
+
+    if (res.status === 404) {
+      setAtendimentos([]);
+      return true;
+    }
+
+    if (!res.ok) {
+      let detalhe = "";
+      try {
+        const j = await res.json();
+        detalhe = j?.detail ? ` ${JSON.stringify(j.detail)}` : "";
+      } catch {
+        const txt = await res.text().catch(() => "");
+        detalhe = txt ? ` ${txt}` : "";
+      }
+
+      setAtendimentos([]);
+      console.error("Atendimentos:", res.status, detalhe);
+      return false;
+    }
+
+    const data = await res.json();
+    setAtendimentos(Array.isArray(data) ? data : []);
+    return true;
+  }
+
+  // ------------- ARQUIVAR/DESARQUIVAR (reversível) — MODAL PADRÃO DO SITE -------------
+  function abrirModalArquivarCaso() {
+    if (!selectedCaso?.id) {
+      setErro("Selecione um caso antes de arquivar/desarquivar.");
+      return;
+    }
+
+    const isArquivado = selectedCaso?.ativo === false;
+
+    setModalArquivarErro("");
+    setModalArquivarMotivo(
+      isArquivado ? "Reativando (correção / validação)" : "Caso de teste / duplicado"
+    );
+    setModalArquivarOpen(true);
+  }
+
+  function fecharModalArquivarCaso() {
+    setModalArquivarOpen(false);
+    setModalArquivarErro("");
+  }
+
+  async function confirmarArquivarOuDesarquivarCaso() {
+    const casoId = selectedCaso?.id;
+    if (!casoId) return;
+
+    const motivo = (modalArquivarMotivo || "").trim();
+    if (!motivo) {
+      setModalArquivarErro("Informe o motivo (obrigatório).");
+      return;
+    }
+
+    const isArquivado = selectedCaso?.ativo === false;
+    const endpoint = isArquivado ? "desarquivar" : "arquivar";
+
+    try {
+      setLoading(true);
+      setErro("");
+      setModalArquivarErro("");
+
+      const res = await apiFetch(`${API_BASE}/casos/${casoId}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo }),
+      });
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) msg = JSON.stringify(errJson.detail);
+        } catch {}
+        throw new Error(msg);
+      }
+
+      const atualizado = await res.json().catch(() => null);
+
+      fecharModalArquivarCaso();
+
+      // mantém a seleção se ainda estiver na lista; senão, cai pro primeiro
+      await carregarCasos(toIntId(atualizado?.id));
+    } catch (e) {
+      console.error(e);
+      setModalArquivarErro(e?.message || "Erro ao arquivar/desarquivar caso.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ------------- AVANÇAR ETAPA DO CASO -------------
+  async function avancarEtapa() {
+    const casoId = toIntId(selectedCaso?.id);
+
+    if (!casoId) {
+      setErro("Selecione um caso válido antes de avançar etapa.");
+      return;
+    }
+
+    // ✅ trava avançar se arquivado
+    if (selectedCaso?.ativo === false) {
+      setErro("Caso arquivado. Desarquive para avançar etapas.");
+      return;
+    }
+
+    setErro("");
+
+    try {
+      setLoading(true);
+
+      const res = await apiFetch(`${API_BASE}/casos/${casoId}/avancar-etapa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usuario_responsavel: usuarioLogado?.nome || "Usuário Pop Rua",
+          observacoes: "Avanço de etapa pela tela principal.",
+        }),
+      });
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) msg = JSON.stringify(errJson.detail);
+        } catch {
+          const txt = await res.text().catch(() => "");
+          if (txt) msg = txt;
+        }
+        throw new Error(msg);
+      }
+
+      const casoAtualizadoRaw = await res.json();
+      const casoAtualizado = {
+        ...casoAtualizadoRaw,
+        id: toIntId(casoAtualizadoRaw?.id),
+        pessoa_id: toIntId(casoAtualizadoRaw?.pessoa_id),
+        municipio_id: toIntId(casoAtualizadoRaw?.municipio_id),
+        ativo: casoAtualizadoRaw?.ativo !== false,
+      };
+
+      setCasos((lista) =>
+        lista.map((c) =>
+          toIntId(c?.id) === casoAtualizado.id ? casoAtualizado : c
+        )
+      );
+      setSelectedCaso(casoAtualizado);
+
+      await carregarLinhaMetro(casoAtualizado.id);
+      await carregarCasos(casoAtualizado.id);
+    } catch (e) {
+      console.error(e);
+      setErro(e.message || "Erro ao avançar etapa.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ------------- CRIAR ATENDIMENTO (tela Ficha) -------------
+  function preencherDataHoraPadrao() {
+    if (!fichaDataHora) {
+      const agora = new Date();
+      const ano = agora.getFullYear();
+      const mes = String(agora.getMonth() + 1).padStart(2, "0");
+      const dia = String(agora.getDate()).padStart(2, "0");
+      const hora = String(agora.getHours()).padStart(2, "0");
+      const min = String(agora.getMinutes()).padStart(2, "0");
+      setFichaDataHora(`${ano}-${mes}-${dia}T${hora}:${min}`);
+    }
+  }
+
+  async function salvarFicha(e) {
+    e.preventDefault();
+    setErro("");
+
+    if (!fichaPessoaId) {
+      setErro("Selecione a pessoa atendida.");
+      return;
+    }
+
+    if (!municipioIdAtual) {
+      setErro(
+        "Não foi possível identificar o município para salvar o atendimento."
+      );
+      return;
+    }
+
+    const body = {
+      tipo_atendimento: fichaTipo,
+      equipamento: fichaEquipamento || fichaLocal || "",
+      resultado: fichaResultado,
+      descricao: fichaDescricao || "",
+      municipio_id: Number(municipioIdAtual),
+      pessoa_id: Number(fichaPessoaId),
+      data_atendimento: fichaDataHora
+        ? new Date(fichaDataHora).toISOString()
+        : new Date().toISOString(),
+    };
+
+    try {
+      setLoading(true);
+      const res = await apiFetch(
+        `${API_BASE}/pessoas/${fichaPessoaId}/atendimentos`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) msg = JSON.stringify(errJson.detail);
+        } catch {
+          const txt = await res.text().catch(() => "");
+          if (txt) msg = txt;
+        }
+        throw new Error(msg);
+      }
+
+      await res.json();
+
+      setFichaCasoId("");
+      setFichaLocal("");
+      setFichaTipo("abordagem_rua");
+      setFichaEquipamento("");
+      setFichaResultado("acompanhamento_continuado");
+      setFichaDescricao("");
+
+      if (
+        selectedCaso &&
+        toIntId(selectedCaso.pessoa_id) === Number(fichaPessoaId)
+      ) {
+        await carregarAtendimentosDaPessoa(selectedCaso.pessoa_id);
+      }
+
+      alert("Atendimento salvo com sucesso!");
+    } catch (e2) {
+      console.error(e2);
+      setErro(e2.message || "Erro ao salvar atendimento.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ------------- CADASTRAR NOVA PESSOA (tela Cadastro) -------------
+  async function salvarPessoa(e) {
+    e.preventDefault();
+    setErro("");
+
+    if (!cadNomeSocial && !cadNomeCivil) {
+      setErro("Preencha pelo menos o nome social ou o nome civil.");
+      return;
+    }
+
+    const body = {
+      nome_social: cadNomeSocial || null,
+      nome_civil: cadNomeCivil || null,
+      cpf: cadCPF || null,
+      municipio_origem_id: cadMunicipioOrigemId
+        ? Number(cadMunicipioOrigemId)
+        : null,
+      tempo_rua: cadTempoRua || null,
+      local_referencia: cadLocalReferencia || null,
+      data_nascimento: cadDataNascimento || null,
+      genero: cadGenero || null,
+      estado_civil: cadEstadoCivil || null,
+      observacoes_gerais: cadObservacoesGerais || null,
+    };
+
+    try {
+      setLoading(true);
+      const res = await apiFetch(`${API_BASE}/pessoas/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) msg = JSON.stringify(errJson.detail);
+        } catch {
+          const txt = await res.text().catch(() => "");
+          if (txt) msg = txt;
+        }
+        throw new Error(msg);
+      }
+
+      const novaPessoa = await res.json();
+      setPessoas((lista) => [...lista, novaPessoa]);
+
+      setCadNomeSocial("");
+      setCadNomeCivil("");
+      setCadCPF("");
+      setCadMunicipioOrigemId("");
+      setCadTempoRua("");
+      setCadLocalReferencia("");
+      setCadDataNascimento("");
+      setCadGenero("");
+      setCadEstadoCivil("");
+      setCadObservacoesGerais("");
+
+      alert("Pessoa cadastrada com sucesso!");
+    } catch (e2) {
+      console.error(e2);
+      setErro(e2.message || "Erro ao salvar pessoa.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ------------- RENDER PRINCIPAL -------------
+  return (
+    <div className="app-root">
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="app-header-title">
+            <div className="app-title-tag">Plataforma de Assistência Social</div>
+
+            <h1 className="app-title">
+              <span className="app-title-prefix">Sistema</span>
+              <span className="app-title-highlight">Pop Rua</span>
+            </h1>
+
+            <p className="app-subtitle">{produtoSubtitulo}</p>
+          </div>
+
+          {usuarioLogado && (
+            <div className="header-user-row">
+              <div className="header-user-top">
+                <span className="header-user-nome">{usuarioLogado.nome}</span>
+
+                <span className="header-user-perfil">
+                  {perfilAtivo === "operador"
+                    ? "Operador municipal"
+                    : perfilAtivo === "coord_municipal"
+                    ? "Coord. municipal"
+                    : perfilAtivo === "gestor_consorcio"
+                    ? "Gestor do consórcio"
+                    : perfilAtivo === "admin"
+                    ? "Admin do sistema"
+                    : perfilAtivo}
+                </span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {isPerfilMunicipal ? (
+                  <span className="texto-suave" style={{ margin: 0 }}>
+                    Município: <strong>{municipioAtivoNome || "—"}</strong>
+                  </span>
+                ) : (
+                  <>
+                    <span className="texto-suave" style={{ margin: 0 }}>
+                      Município ativo:
+                    </span>
+                    <select
+                      className="input"
+                      style={{ width: 260 }}
+                      value={municipioAtivoId ?? ""}
+                      onChange={(e) =>
+                        setMunicipioAtivoId(
+                          e.target.value ? Number(e.target.value) : null
+                        )
+                      }
+                    >
+                      <option value="">Selecione...</option>
+                      {municipios.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nome || m.nome_municipio}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+
+              {typeof onLogout === "function" && (
+                <button
+                  type="button"
+                  className="btn btn-secundario btn-secundario-mini btn-logout"
+                  onClick={onLogout}
+                >
+                  Sair
+                </button>
+              )}
+            </div>
+          )}
+
+          <nav className="app-tabs" aria-label="Navegação principal">
+            {podeVerAba("inicio") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" + (activeTab === "inicio" ? " app-tab-active" : "")
+                }
+                onClick={() => setActiveTab("inicio")}
+              >
+                Início
+              </button>
+            )}
+
+            {podeVerAba("atendimento") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "atendimento" ? " app-tab-active" : "")
+                }
+                onClick={() => {
+                  setActiveTab("atendimento");
+                  setAtendimentoView("casos");
+                }}
+              >
+                Atendimento
+              </button>
+            )}
+
+            {podeVerAba("pessoas") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "pessoas" ? " app-tab-active" : "")
+                }
+                onClick={() => {
+                  setActiveTab("pessoas");
+                  setPessoasView("ficha");
+                }}
+              >
+                Pessoas
+              </button>
+            )}
+
+
+            {podeVerAba("cras") && (
+              <button
+                type="button"
+                className={"app-tab" + (activeTab === "cras" ? " app-tab-active" : "")}
+                onClick={() => setActiveTab("cras")}
+              >
+                CRAS
+              </button>
+            )}
+
+            {podeVerAba("saude_intersetorial") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "saude_intersetorial" ? " app-tab-active" : "")
+                }
+                onClick={() => {
+                  // se vier da navegação, tenta abrir já no caso selecionado
+                  setSaudeCasoInicialId(
+                    selectedCaso?.id != null ? String(selectedCaso.id) : ""
+                  );
+                  setActiveTab("saude_intersetorial");
+                }}
+              >
+                Saúde (intersetorial)
+              </button>
+            )}
+
+            {podeVerAba("familia") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" + (activeTab === "familia" ? " app-tab-active" : "")
+                }
+                onClick={() => setActiveTab("familia")}
+              >
+                Família & Benefícios
+              </button>
+            )}
+
+            {podeVerAba("encaminhamentos") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "encaminhamentos" ||
+                  activeTab === "encaminhamento_intermunicipal"
+                    ? " app-tab-active"
+                    : "")
+                }
+                onClick={() => setActiveTab("encaminhamentos")}
+              >
+                Encaminhamentos
+              </button>
+            )}
+
+            {podeVerAba("dashboard") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "dashboard" ? " app-tab-active" : "")
+                }
+                onClick={() => setActiveTab("dashboard")}
+              >
+                Dashboard Pop Rua
+              </button>
+            )}
+
+            {podeVerAba("guia_suas") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "guia_suas" ? " app-tab-active" : "")
+                }
+                onClick={() => setActiveTab("guia_suas")}
+                title="Conteúdos práticos para equipe e gestão: financiamento, organização e equipamentos do SUAS."
+              >
+                Guia SUAS
+              </button>
+            )}
+
+            {podeVerAba("regional") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" +
+                  (activeTab === "regional" ? " app-tab-active" : "")
+                }
+                onClick={() => setActiveTab("regional")}
+              >
+                Gestão Regional (Consórcio)
+              </button>
+            )}
+
+            {podeVerAba("protocolo") && (
+              <button
+                type="button"
+                className={
+                  "app-tab" + (activeTab === "protocolo" ? " app-tab-active" : "")
+                }
+                onClick={() => {
+                  // abre já no caso selecionado, se existir
+                  setActiveTab("protocolo");
+                }}
+              >
+                Protocolo do Caso
+              </button>
+            )}
+          </nav>
+
+          {/* SUB-ABAS (hubs) */}
+          {activeTab === "atendimento" && (
+            <div className="hub-subtabs" role="navigation" aria-label="Atendimento">
+              <div className="hub-subtabs-left">
+                <button
+                  type="button"
+                  className={
+                    "hub-chip" + (atendimentoView === "casos" ? " hub-chip-active" : "")
+                  }
+                  onClick={() => setAtendimentoView("casos")}
+                >
+                  Casos
+                </button>
+                <button
+                  type="button"
+                  className={
+                    "hub-chip" + (atendimentoView === "ficha" ? " hub-chip-active" : "")
+                  }
+                  onClick={() => {
+                    setAtendimentoView("ficha");
+                    preencherDataHoraPadrao();
+                  }}
+                >
+                  Ficha de atendimento
+                </button>
+              </div>
+              <div className="hub-subtabs-right">
+                <button
+                  type="button"
+                  className="btn btn-secundario btn-secundario-mini"
+                  onClick={abrirCadastroPessoa}
+                  title="Cadastrar nova pessoa"
+                >
+                  + Nova pessoa
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "pessoas" && (
+            <div className="hub-subtabs" role="navigation" aria-label="Pessoas">
+              <div className="hub-subtabs-left">
+                <button
+                  type="button"
+                  className={
+                    "hub-chip" + (pessoasView === "ficha" ? " hub-chip-active" : "")
+                  }
+                  onClick={() => setPessoasView("ficha")}
+                >
+                  Ficha da pessoa
+                </button>
+                <button
+                  type="button"
+                  className={
+                    "hub-chip" +
+                    (pessoasView === "cadastro" ? " hub-chip-active" : "")
+                  }
+                  onClick={() => setPessoasView("cadastro")}
+                >
+                  Novo cadastro
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </header>
+
+      <main className={mainClass}>
+        {activeTab === "cras" && (
+          <TelaCras apiBase={API_BASE} apiFetch={apiFetch} usuarioLogado={usuarioLogado} />
+        )}
+
+        {activeTab === "inicio" && (
+          <TelaInicialSistema
+            pessoas={pessoasVisiveis}
+            casos={casosVisiveis}
+            navegar={{
+              atendimento: () => {
+                setActiveTab("atendimento");
+                setAtendimentoView("casos");
+              },
+              fichaAtendimento: () => {
+                setActiveTab("atendimento");
+                setAtendimentoView("ficha");
+                preencherDataHoraPadrao();
+              },
+              pessoas: () => {
+                setActiveTab("pessoas");
+                setPessoasView("ficha");
+              },
+              cadastroPessoa: () => {
+                setActiveTab("pessoas");
+                setPessoasView("cadastro");
+              },
+              familia: () => setActiveTab("familia"),
+              protocolo: () => setActiveTab("protocolo"),
+              guiaSuas: () => setActiveTab("guia_suas"),
+            }}
+          />
+        )}
+
+        {activeTab === "atendimento" && atendimentoView === "casos" && (
+          <TelaCasos
+            pessoas={pessoasVisiveis}
+            casos={casosVisiveis}
+          apiFetch={apiFetch}
+municipios={municipios}
+carregarLinhaMetro={carregarLinhaMetro}
+  selectedCaso={selectedCaso}
+            linhaMetro={linhaMetro}
+            atendimentos={atendimentos}
+            pessoaIdForm={pessoaIdForm}
+            obsIniciaisForm={obsIniciaisForm}
+            setPessoaIdForm={setPessoaIdForm}
+            setObsIniciaisForm={setObsIniciaisForm}
+            criarCaso={criarCaso}
+            carregarCasos={carregarCasos}
+            selecionarCaso={selecionarCaso}
+            avancarEtapa={avancarEtapa}
+            arquivarCasoSelecionado={abrirModalArquivarCaso}
+            incluirInativosCasos={incluirInativosCasos}
+            setIncluirInativosCasos={setIncluirInativosCasos}
+            loading={loading}
+            municipioAtivoId={municipioIdAtual}
+            municipioAtivoNome={municipioAtivoNome}
+            autorNomeDefault={usuarioLogado?.nome || "Usuário Pop Rua"}
+            irParaFichaPessoa={abrirFichaPessoa}
+            irParaSaudeIntersetorial={abrirSaudeIntersetorial}
+            irParaFichaAtendimento={abrirFichaAtendimento}
+            irParaCadastroPessoa={abrirCadastroPessoa}
+          />
+        )}
+
+        {activeTab === "saude_intersetorial" && (
+          <div className="layout-1col">
+            <PageHero
+              kicker="Intersetorial"
+              title="Saúde (encaminhamento intersetorial)"
+              subtitle="Registre encaminhamentos para UBS/CAPS/Hospital/Consultório na Rua com exposição mínima de dados."
+              tips={[
+                "Compartilhe apenas o mínimo necessário (LGPD).",
+                "Acompanhe status e devolutiva no histórico do caso.",
+              ]}
+              badge="Saúde"
+            />
+            <TelaSaudeIntersetorial
+              apiBase={API_BASE}
+              apiFetch={apiFetch}
+              usuarioLogado={usuarioLogado}
+              municipios={municipios}
+              pessoa={(() => {
+                const pid = selectedCaso?.pessoa_id;
+                if (!pid) return null;
+                return (
+                  (pessoasVisiveis || []).find((p) => Number(p?.id) === Number(pid)) ||
+                  (pessoas || []).find((p) => Number(p?.id) === Number(pid)) ||
+                  null
+                );
+              })()}
+              casos={casosVisiveis}
+              casoIdInicial={saudeCasoInicialId || selectedCaso?.id || ""}
+            />
+          </div>
+        )}
+
+        {activeTab === "atendimento" && atendimentoView === "ficha" && (
+          <TelaFichaAtendimento
+            pessoas={pessoasVisiveis}
+            casos={casosVisiveis}
+            fichaPessoaId={fichaPessoaId}
+            setFichaPessoaId={setFichaPessoaId}
+            fichaCasoId={fichaCasoId}
+            setFichaCasoId={setFichaCasoId}
+            fichaDataHora={fichaDataHora}
+            setFichaDataHora={setFichaDataHora}
+            fichaLocal={fichaLocal}
+            setFichaLocal={setFichaLocal}
+            fichaTipo={fichaTipo}
+            setFichaTipo={setFichaTipo}
+            fichaEquipamento={fichaEquipamento}
+            setFichaEquipamento={setFichaEquipamento}
+            fichaResultado={fichaResultado}
+            setFichaResultado={setFichaResultado}
+            fichaDescricao={fichaDescricao}
+            setFichaDescricao={setFichaDescricao}
+            salvarFicha={salvarFicha}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === "encaminhamentos" && (
+          <div className="layout-1col">
+            <PageHero
+              kicker="Encaminhamentos"
+              title="Encaminhamentos intermunicipais"
+              subtitle="Organize envio, recebimento e devolutivas entre municípios, com rastreabilidade."
+              tips={["Use filtros por status e prazo.", "Vincule ao caso para histórico completo."]}
+              badge="Rede"
+              rightText={
+                <>
+                  Município ativo: <strong>{municipioAtivoNome || "—"}</strong>
+                </>
+              }
+              actions={
+                <button
+                  type="button"
+                  className="btn btn-secundario btn-secundario-mini"
+                  onClick={abrirEncIntermunicipal}
+                >
+                  + Novo encaminhamento
+                </button>
+              }
+            />
+
+            <TelaEncaminhamentos
+              apiBase={API_BASE}
+              apiFetch={apiFetch}
+              usuarioLogado={usuarioLogado}
+              municipios={municipios}
+              pessoas={pessoasVisiveis}
+              municipioAtivoNome={municipioAtivoNome}
+              onNovoEncaminhamento={abrirEncIntermunicipal}
+            />
+          </div>
+        )}
+
+        {activeTab === "encaminhamento_intermunicipal" && (
+          <div className="layout-1col">
+            <PageHero
+              kicker="Encaminhamentos"
+              title="Novo encaminhamento intermunicipal"
+              subtitle="Preencha dados mínimos e acompanhe status (enviado → recebido → devolutiva)."
+              tips={["Compartilhe o mínimo necessário (LGPD).", "Defina prazo e responsável quando aplicável."]}
+              badge="Registro"
+              actions={
+                <button
+                  type="button"
+                  className="btn btn-secundario btn-secundario-mini"
+                  onClick={voltarParaEncaminhamentos}
+                >
+                  ← Voltar
+                </button>
+              }
+            />
+
+            <TelaEncaminhamentoIntermunicipal
+              apiBase={API_BASE}
+              apiFetch={apiFetch}
+              usuarioLogado={usuarioLogado}
+              municipios={municipios}
+              pessoas={pessoasVisiveis}
+              casos={casosVisiveis}
+              municipioAtivoNome={municipioAtivoNome}
+              onVoltar={voltarParaEncaminhamentos}
+            />
+          </div>
+        )}
+
+
+        {activeTab === "pessoas" && pessoasView === "ficha" && (
+          <div className="layout-1col">
+            <PageHero
+              kicker="Pessoas"
+              title="Ficha da pessoa"
+              subtitle="Consulte histórico, vínculos e dados necessários para o atendimento (com cuidados de LGPD)."
+              tips={["Use filtros por município/perfil quando disponível.", "Complete informações de forma gradual (evite dados desnecessários)."]}
+              badge="Pessoas"
+              rightText={
+                <>
+                  Município: <strong>{municipioAtivoNome || "—"}</strong>
+                </>
+              }
+            />
+            <TelaFichaPessoa
+            municipios={municipios}
+            pessoas={pessoasVisiveis}
+            casos={casosVisiveis}
+            apiBase={API_BASE}
+            apiFetch={apiFetch}
+            usuarioLogado={usuarioLogado}
+            municipioAtivoId={municipioIdAtual}
+            municipioAtivoNome={municipioAtivoNome}
+            pessoaIdInicial={
+              fichaPessoaInicialId || selectedCaso?.pessoa_id || pessoaIdForm || ""
+            }
+            />
+          </div>
+        )}
+
+        {activeTab === "pessoas" && pessoasView === "cadastro" && (
+          <TelaCadastroPessoa
+            cadNomeSocial={cadNomeSocial}
+            setCadNomeSocial={setCadNomeSocial}
+            cadNomeCivil={cadNomeCivil}
+            setCadNomeCivil={setCadNomeCivil}
+            cadCPF={cadCPF}
+            setCadCPF={setCadCPF}
+            cadMunicipioOrigemId={cadMunicipioOrigemId}
+            setCadMunicipioOrigemId={setCadMunicipioOrigemId}
+            cadTempoRua={cadTempoRua}
+            setCadTempoRua={setCadTempoRua}
+            cadLocalReferencia={cadLocalReferencia}
+            setCadLocalReferencia={setCadLocalReferencia}
+            cadDataNascimento={cadDataNascimento}
+            setCadDataNascimento={setCadDataNascimento}
+            cadGenero={cadGenero}
+            setCadGenero={setCadGenero}
+            cadEstadoCivil={cadEstadoCivil}
+            setCadEstadoCivil={setCadEstadoCivil}
+            cadObservacoesGerais={cadObservacoesGerais}
+            setCadObservacoesGerais={setCadObservacoesGerais}
+            salvarPessoa={salvarPessoa}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === "familia" && (
+          <div className="layout-1col">
+  <PageHero
+    kicker="Cadastro"
+    title="Família & Benefícios"
+    subtitle="Registre família de referência e benefícios (BPC, Bolsa Família, benefícios eventuais, etc.)."
+    tips={[
+      "Selecione uma pessoa para visualizar e editar os registros.",
+      "Mantenha o histórico atualizado para apoiar o acompanhamento do caso.",
+    ]}
+    badge="SUAS"
+    rightText={
+      <>
+        Perfil: <strong>{perfilAtivo || "—"}</strong> · Município: <strong>{municipioAtivoNome || "—"}</strong>
+      </>
+    }
+  />
+
+    <TelaFamiliaBeneficios pessoas={pessoasVisiveis} />
+</div>
+        )}
+
+        {activeTab === "dashboard" && (
+  <div className="layout-1col">
+    <PageHero
+      kicker="Indicadores"
+      title="Dashboard Pop Rua"
+      subtitle="Métricas operacionais do município e visão geral do programa."
+      tips={[
+        "Use o seletor de município no topo para filtrar.",
+        "Clique em Atualizar para recarregar os números quando necessário.",
+      ]}
+      badge="Painel"
+      rightText={
+        <>
+          Perfil: <strong>{perfilAtivo || "—"}</strong> · Município:{" "}
+          <strong>{municipioAtivoNome || "—"}</strong>
+        </>
+      }
+    />
+
+    <TelaDashboardPopRua
+      apiBase={API_BASE}
+      apiFetch={apiFetch}
+      perfilAtivo={perfilAtivo}
+      municipioAtivoId={municipioIdAtual}
+      municipioAtivoNome={municipioAtivoNome}
+      municipios={municipios}
+      pessoas={pessoasVisiveis}
+      casos={casosVisiveis}
+    />
+  </div>
+)}
+
+        {activeTab === "guia_suas" && (
+          <div className="layout-1col">
+            <PageHero
+              kicker="Guia"
+              title="Guia SUAS — Gestão e Financiamento"
+              subtitle="Conteúdos práticos para equipe e gestão: financiamento, organização e equipamentos do SUAS."
+              tips={[
+                "Use a coluna da esquerda para navegar por temas.",
+                "Aplique como referência para padronizar rotinas e capacitações.",
+              ]}
+              badge="SUAS"
+            />
+            <TelaGuiaSUAS />
+          </div>
+        )}
+
+        {activeTab === "regional" && (
+  <div className="layout-1col">
+    <PageHero
+      kicker="Consórcio"
+      title="Gestão Regional (Consórcio)"
+      subtitle="Painel agregado por município para coordenação regional."
+      tips={[
+        "Compare total de casos, em andamento, encerrados e arquivados por município.",
+        "Use para priorizar apoio técnico e monitorar fluxo regional.",
+      ]}
+      badge="Regional"
+      rightText={
+        <>
+          Perfil: <strong>{perfilAtivo || "—"}</strong>
+        </>
+      }
+    />
+
+    <TelaGestaoRegional perfilAtivo={perfilAtivo} municipios={municipios} casos={casos} />
+  </div>
+)}
+
+        {activeTab === "protocolo" && (
+  <div className="layout-1col">
+    <PageHero
+      kicker="Caso"
+      title="Protocolo do Caso (B1)"
+      subtitle="Checklist e plano de ação com autoria, prazos e alertas."
+      tips={[
+        "Selecione um caso para ver checklist por etapa.",
+        "Use 'Copiar' para exportar o resumo rápido (B1).",
+      ]}
+      badge="B1"
+      rightText={
+        <>
+          Caso atual: <strong>#{selectedCaso?.id || "—"}</strong>
+        </>
+      }
+    />
+
+    <TelaProtocoloCaso
+      apiBase={API_BASE}
+      apiFetch={apiFetch}
+      usuarioLogado={usuarioLogado}
+      pessoas={pessoasVisiveis}
+      casos={casosVisiveis}
+      casoSelecionado={selectedCaso}
+    />
+  </div>
+)}
+
+        {erro && <p className="erro-global">{erro}</p>}
+      </main>
+
+      {/* ✅ MODAL ESTILIZADO */}
+      {modalArquivarOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={fecharModalArquivarCaso}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(17,24,39,.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 18,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="modal-card card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(560px, 100%)",
+              borderRadius: 16,
+              border: "1px solid rgba(17,24,39,.08)",
+              boxShadow: "0 20px 60px rgba(0,0,0,.25)",
+              padding: 14,
+            }}
+          >
+            <div className="card-header-row">
+              <div>
+                <h3 style={{ margin: 0 }}>
+                  {selectedCaso?.ativo === false ? "Desarquivar caso" : "Arquivar caso"}
+                </h3>
+                <p className="texto-suave" style={{ marginTop: 6 }}>
+                  Ação reversível. Registra no histórico <strong>quem</strong> fez e o <strong>motivo</strong>.
+                </p>
+                {selectedCaso?.id ? (
+                  <p className="texto-suave" style={{ marginTop: 6 }}>
+                    Caso: <strong>#{selectedCaso.id}</strong>
+                  </p>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-secundario btn-secundario-mini"
+                onClick={fecharModalArquivarCaso}
+              >
+                Fechar
+              </button>
+            </div>
+
+            {modalArquivarErro && <p className="erro-global">{modalArquivarErro}</p>}
+
+            <label className="form-label" style={{ marginTop: 10 }}>
+              Motivo (obrigatório)
+              <textarea
+                className="input"
+                rows={3}
+                value={modalArquivarMotivo}
+                onChange={(e) => setModalArquivarMotivo(e.target.value)}
+                placeholder="Ex.: caso duplicado, teste, aberto por engano..."
+              />
+            </label>
+
+            <div className="card-footer-right" style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className="btn btn-secundario"
+                onClick={fecharModalArquivarCaso}
+                disabled={loading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primario"
+                onClick={confirmarArquivarOuDesarquivarCaso}
+                disabled={loading}
+                style={{ marginLeft: 10 }}
+              >
+                {loading
+                  ? "Salvando..."
+                  : selectedCaso?.ativo === false
+                  ? "Desarquivar"
+                  : "Arquivar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =====================
+   TELAS INTERNAS
+   ===================== */
+
+function TelaCasos({
+  pessoas,
+  casos,
+  selectedCaso,
+  linhaMetro,
+  atendimentos,
+  pessoaIdForm,
+apiFetch,
+municipios,
+carregarLinhaMetro,
+  obsIniciaisForm,
+  setPessoaIdForm,
+  setObsIniciaisForm,
+  criarCaso,
+  carregarCasos,
+  selecionarCaso,
+  avancarEtapa,
+  arquivarCasoSelecionado,
+  incluirInativosCasos,
+  setIncluirInativosCasos,
+  loading,
+  municipioAtivoId,
+  municipioAtivoNome,
+  autorNomeDefault,
+  irParaFichaPessoa,
+  irParaSaudeIntersetorial,
+  irParaFichaAtendimento,
+  irParaCadastroPessoa,
+}) {
+  const [abaDetalhe, setAbaDetalhe] = useState("linha");
+
+  // NOVO: filtro separado só para VER casos (sem criar)
+  const [pessoaVerCasosId, setPessoaVerCasosId] = useState("");
+
+  function getPessoa(pessoaId) {
+    const id = Number(pessoaId);
+    return pessoas.find((p) => Number(p?.id) === id) || null;
+  }
+
+  function getNomePessoa(pessoaId) {
+    const p = getPessoa(pessoaId);
+    return p?.nome_social || p?.nome_civil || "Pessoa";
+  }
+
+  function getIniciais(pessoaId) {
+    const nome = getNomePessoa(pessoaId);
+    return nome.trim().charAt(0).toUpperCase() || "?";
+  }
+
+  function getStatusLegivel(caso) {
+    if (caso?.ativo === false) return "Arquivado";
+    const s = String(caso?.status || "").toLowerCase();
+    return s === "encerrado" ? "Encerrado" : "Em andamento";
+  }
+
+  useEffect(() => {
+    setAbaDetalhe("linha");
+  }, [selectedCaso?.id]);
+
+  const pessoaRefId = useMemo(() => {
+    if (pessoaVerCasosId) return Number(pessoaVerCasosId);
+    if (selectedCaso?.pessoa_id) return Number(selectedCaso.pessoa_id);
+    if (pessoaIdForm) return Number(pessoaIdForm);
+    return null;
+  }, [pessoaVerCasosId, selectedCaso?.pessoa_id, pessoaIdForm]);
+
+  const casosDaPessoa = useMemo(() => {
+    if (!pessoaRefId) return [];
+    return (casos || [])
+      .filter((c) => Number(c?.pessoa_id) === Number(pessoaRefId))
+      .sort((a, b) => Number(b?.id) - Number(a?.id));
+  }, [casos, pessoaRefId]);
+
+  useEffect(() => {
+    if (!pessoaVerCasosId) return;
+    const pid = Number(pessoaVerCasosId);
+    if (!pid) return;
+
+    const maisRecente = (casos || [])
+      .filter((c) => Number(c?.pessoa_id) === pid)
+      .sort((a, b) => Number(b?.id) - Number(a?.id))[0];
+
+    if (maisRecente) selecionarCaso(maisRecente);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pessoaVerCasosId, casos]);
+
+  return (
+    <>
+
+
+      <PageHero
+        kicker="Atendimento"
+        title="Atendimento — Pop Rua"
+        subtitle="Selecione uma pessoa, escolha um caso e registre atendimentos com padronização e rastreabilidade."
+        tips={[
+          "Clique na Linha do metrô para ver histórico por etapa.",
+          "Use 'Registrar atendimento' para criar um registro rápido.",
+        ]}
+        badge="Atendimento"
+        rightText={
+          <>
+            Município: <strong>{municipioAtivoNome || "—"}</strong>
+          </>
+        }
+        actions={
+          <div className="portal-hero-actions">
+            <button
+              type="button"
+              className="btn btn-secundario btn-secundario-mini"
+              onClick={() => typeof irParaCadastroPessoa === "function" && irParaCadastroPessoa()}
+            >
+              + Nova pessoa
+            </button>
+            <button
+              type="button"
+              className="btn btn-secundario btn-secundario-mini"
+              onClick={() => {
+                if (typeof irParaFichaAtendimento !== "function") return;
+                const pid = pessoaRefId || selectedCaso?.pessoa_id || pessoaIdForm || "";
+                const cid = selectedCaso?.id || "";
+                irParaFichaAtendimento(pid, cid);
+              }}
+              disabled={!pessoaRefId && !selectedCaso?.pessoa_id && !pessoaIdForm}
+              title={!pessoaRefId && !selectedCaso?.pessoa_id && !pessoaIdForm ? "Selecione uma pessoa primeiro" : ""}
+            >
+              Registrar atendimento
+            </button>
+          </div>
+        }
+      />
+
+      <section className="col-esquerda casos-sidebar">
+        {/* CARD 1: NOVO CASO */}
+        <div className="card casos-card-pessoa">
+          <h2 className="casos-card-title">Pessoa & novo caso</h2>
+          <p className="casos-card-subtitle">
+            Abra um novo caso Pop Rua para a pessoa selecionada.
+          </p>
+
+          {!municipioAtivoId && (
+            <p className="erro-global" style={{ marginTop: 8 }}>
+              Selecione o <strong>Município ativo</strong> no topo para abrir um
+              caso.
+            </p>
+          )}
+
+          <form onSubmit={criarCaso} className="form-caso">
+            <label className="form-label">
+              Pessoa
+              <select
+                className="input"
+                value={pessoaIdForm}
+                onChange={(e) => setPessoaIdForm(e.target.value)}
+              >
+                <option value="">Selecione...</option>
+                {pessoas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nome_social || p.nome_civil || "Pessoa"}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="form-label">
+              Observações iniciais (opcional)
+              <textarea
+                className="input"
+                rows={3}
+                placeholder="Resumo do caso, histórico breve, local de abordagem, etc."
+                value={obsIniciaisForm}
+                onChange={(e) => setObsIniciaisForm(e.target.value)}
+              />
+            </label>
+
+            <button
+              type="submit"
+              className="btn btn-primario btn-cheio"
+              disabled={loading || !municipioAtivoId}
+            >
+              {loading ? "Salvando..." : "Criar caso Pop Rua"}
+            </button>
+          </form>
+
+          <p className="texto-suave" style={{ marginTop: 10 }}>
+            Município ativo: <strong>{municipioAtivoNome || "—"}</strong>
+          </p>
+        </div>
+
+        {/* CARD 2: LISTAR CASOS (SEM CRIAR) */}
+        <div className="card casos-card-lista">
+          <div className="card-header-row">
+            <div>
+              <h2 className="casos-card-title">Casos da pessoa</h2>
+              <p className="casos-card-subtitle">
+                Selecione uma pessoa para ver os casos existentes (sem criar caso novo).
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secundario btn-secundario-mini"
+              onClick={carregarCasos}
+            >
+              Atualizar
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+            <label className="form-label" style={{ margin: 0, flex: "1 1 220px" }}>
+              Ver casos de:
+              <select
+                className="input"
+                value={pessoaVerCasosId}
+                onChange={(e) => setPessoaVerCasosId(e.target.value)}
+              >
+                <option value="">Selecione...</option>
+                {pessoas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nome_social || p.nome_civil || "Pessoa"}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="texto-suave" style={{ display: "flex", gap: 8, alignItems: "center", margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={!!incluirInativosCasos}
+                onChange={(e) => setIncluirInativosCasos(!!e.target.checked)}
+                style={{ width: 16, height: 16 }}
+              />
+              Mostrar arquivados
+            </label>
+          </div>
+
+          {pessoaRefId && casosDaPessoa.length === 0 && (
+            <p className="texto-suave" style={{ marginTop: 10 }}>
+              Essa pessoa ainda não tem caso.
+            </p>
+          )}
+
+          <ul className="lista-casos">
+            {casosDaPessoa.map((caso) => {
+              const nomePessoa = getNomePessoa(caso.pessoa_id);
+              const ativoSel = selectedCaso && Number(selectedCaso.id) === Number(caso.id);
+              const arquivado = caso?.ativo === false;
+
+              return (
+                <li
+                  key={caso.id}
+                  className={
+                    "item-caso" +
+                    (ativoSel ? " item-caso-ativo" : "") +
+                    (arquivado ? " item-caso-arquivado" : "")
+                  }
+                  onClick={() => selecionarCaso(caso)}
+                >
+                  <div>
+                    <div className="item-caso-nome">{nomePessoa}</div>
+                    <div className="item-caso-sub">
+                      Etapa: {caso.etapa_atual || "-"} · {getStatusLegivel(caso)}
+                    </div>
+                  </div>
+
+                  <span className={"badge-status" + (arquivado ? " badge-arquivado" : "")}>
+                    {getStatusLegivel(caso)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </section>
+
+      <section className="col-direita casos-main">
+        {!selectedCaso && (
+          <div className="card casos-empty">
+            <h2>Selecione um caso para começar</h2>
+            <p className="texto-suave">
+              Use a lista de casos ao lado para escolher qual atendimento Pop Rua você quer acompanhar.
+            </p>
+          </div>
+        )}
+
+        {selectedCaso && (
+          <>
+            <div className="card casos-hero-card">
+              <div className="casos-hero">
+                <div className="casos-hero-esquerda">
+                  <div className="casos-avatar">
+                    <span>{getIniciais(selectedCaso.pessoa_id)}</span>
+                  </div>
+                  <div>
+                    <div className="casos-hero-nome">{getNomePessoa(selectedCaso.pessoa_id)}</div>
+                    <div className="casos-hero-meta">
+                      <span className="casos-hero-chip">Etapa: {selectedCaso.etapa_atual || "-"}</span>
+
+                      <span
+                        className={
+                          "casos-hero-chip casos-hero-chip-status" +
+                          (selectedCaso?.ativo === false ? " chip-arquivado" : "")
+                        }
+                      >
+                        {getStatusLegivel(selectedCaso)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className="casos-hero-acoes"
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                  }}
+                >
+                  {typeof irParaFichaPessoa === "function" && (
+                    <button
+                      type="button"
+                      className="btn btn-secundario btn-secundario-mini"
+                      onClick={() => irParaFichaPessoa(selectedCaso.pessoa_id)}
+                    >
+                      Ficha da pessoa
+                    </button>
+                  )}
+                  {typeof irParaSaudeIntersetorial === "function" && (
+                    <button
+                      type="button"
+                      className="btn btn-secundario btn-secundario-mini"
+                      onClick={() => irParaSaudeIntersetorial(selectedCaso?.id)}
+                      disabled={!selectedCaso?.id}
+                      title="Abrir Saúde (intersetorial) para este caso"
+                    >
+                      Saúde (intersetorial)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secundario btn-secundario-mini"
+                    onClick={carregarCasos}
+                  >
+                    Atualizar casos
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-secundario btn-secundario-mini"
+                    onClick={arquivarCasoSelecionado}
+                    disabled={loading}
+                    title="Arquivamento reversível (soft delete)"
+                  >
+                    {selectedCaso?.ativo === false ? "Desarquivar" : "Arquivar"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-primario btn-primario-mini"
+                    onClick={avancarEtapa}
+                    disabled={loading || selectedCaso?.ativo === false}
+                    title={selectedCaso?.ativo === false ? "Desarquive o caso para avançar etapas." : ""}
+                  >
+                    Avançar etapa
+                  </button>
+                </div>
+              </div>
+
+              <div className="casos-subtabs">
+                <button
+                  type="button"
+                  className={"casos-subtab" + (abaDetalhe === "linha" ? " casos-subtab-ativa" : "")}
+                  onClick={() => { setAbaDetalhe("linha"); if (casoSelecionadoId) carregarLinhaMetro(casoSelecionadoId); }}
+                >
+                  Linha de metrô
+                </button>
+
+                <button
+                  type="button"
+                  className={"casos-subtab" + (abaDetalhe === "atendimentos" ? " casos-subtab-ativa" : "")}
+                  onClick={() => setAbaDetalhe("atendimentos")}
+                >
+                  Atendimentos
+                </button>
+
+                <button
+                  type="button"
+                  className={"casos-subtab" + (abaDetalhe === "comunicacao" ? " casos-subtab-ativa" : "")}
+                  onClick={() => setAbaDetalhe("comunicacao")}
+                >
+                  Comunicação
+                </button>
+
+                <button
+                  type="button"
+                  className={"casos-subtab" + (abaDetalhe === "acolhimento" ? " casos-subtab-ativa" : "")}
+                  onClick={() => setAbaDetalhe("acolhimento")}
+                >
+                  Acolhimentos
+                </button>
+              </div>
+            </div>
+
+            {abaDetalhe === "linha" && (
+              <div className="card casos-content-card">
+                {linhaMetro ? (
+                  <LinhaMetro
+                    linhaMetro={linhaMetro}
+                    casoId={selectedCaso?.id}
+                    apiBase={API_BASE}
+                    apiFetch={apiFetch}
+                    atendimentos={atendimentos}
+                    municipios={municipios}
+                    onRefresh={() => carregarLinhaMetro(selectedCaso?.id)}
+                  />
+                ) : (
+                  <p className="texto-suave">Não foi possível carregar a linha de metrô.</p>
+                )}
+              </div>
+            )}
+
+            {abaDetalhe === "atendimentos" && (
+              <div className="card casos-content-card">
+                <div className="card-header-row">
+                  <h2>Atendimentos da pessoa</h2>
+                  <span className="badge-info badge-nome-pessoa">{getNomePessoa(selectedCaso.pessoa_id)}</span>
+                </div>
+
+                {atendimentos.length === 0 ? (
+                  <p className="texto-suave">Ainda não há atendimentos cadastrados.</p>
+                ) : (
+                  <ListaAtendimentos atendimentos={atendimentos} />
+                )}
+              </div>
+            )}
+
+            {abaDetalhe === "comunicacao" && (
+              <div className="card casos-content-card">
+                <CanalComunicacao
+                  pessoaId={selectedCaso.pessoa_id}
+                  casoId={selectedCaso.id}
+                  municipioId={municipioAtivoId != null ? Number(municipioAtivoId) : null}
+                  municipioNome={municipioAtivoNome || ""}
+                  autorNomeDefault={autorNomeDefault || "Usuário Pop Rua"}
+                />
+              </div>
+            )}
+
+            {abaDetalhe === "acolhimento" && (
+              <div className="card casos-content-card">
+                <TelaAcolhimentosPessoa pessoaId={selectedCaso.pessoa_id} casoId={selectedCaso.id} />
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+
+function LinhaMetro({ linhaMetro, casoId, apiBase, apiFetch, atendimentos = [], municipios = [], onRefresh }) {
+		
+  const [openCodigo, setOpenCodigo] = useState(null);
+  const [modalEtapa, setModalEtapa] = useState(null);
+  const [obs, setObs] = useState("");
+  const [atendimentoId, setAtendimentoId] = useState("");
+  const [encaminhamentos, setEncaminhamentos] = useState([]);
+  const [encSel, setEncSel] = useState({});
+  const [loadingEnc, setLoadingEnc] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");	
+  if (!linhaMetro || !Array.isArray(linhaMetro.etapas)) return null;
+  
+  function label(st) {
+    if (st === "concluida") return "Concluída";
+    if (st === "em_andamento") return "Em andamento";
+    return "Não iniciada";
+  }
+
+  function fmtDataHora(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("pt-BR");
+  }
+
+  function nomeMunicipio(mId) {
+    const id = Number(mId);
+    const m = (municipios || []).find((x) => Number(x?.id) === id);
+    return m?.nome || m?.nome_municipio || (mId != null ? String(mId) : "—");
+  }
+
+  async function abrirModalRegistrar(codigo) {
+    if (!casoId) return;
+    setMsg("");
+    setModalEtapa(codigo);
+    setObs("");
+    setAtendimentoId("");
+    setEncSel({});
+
+    setLoadingEnc(true);
+    try {
+      const res = await apiFetch(`${apiBase}/encaminhamentos/?caso_id=${Number(casoId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEncaminhamentos(Array.isArray(data) ? data : []);
+      } else {
+        setEncaminhamentos([]);
+      }
+    } catch {
+      setEncaminhamentos([]);
+    } finally {
+      setLoadingEnc(false);
+    }
+  }
+
+  async function salvarRegistro() {
+    if (!casoId || !modalEtapa) return;
+    setSaving(true);
+    setMsg("");
+    const ids = Object.keys(encSel)
+      .filter((k) => encSel[k])
+      .map((k) => Number(k))
+      .filter((n) => !isNaN(n));
+
+    const body = {
+      etapa: modalEtapa,
+      obs: obs || null,
+      atendimento_id: atendimentoId ? Number(atendimentoId) : null,
+      encaminhamentos_ids: ids,
+    };
+
+    try {
+      const res = await apiFetch(`${apiBase}/casos/${Number(casoId)}/linha-metro/registrar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        setMsg(`Falha ao registrar: HTTP ${res.status}. ${txt || ""}`);
+        return;
+      }
+
+      setModalEtapa(null);
+      if (typeof onRefresh === "function") {
+        await onRefresh();
+      }
+    } catch (e) {
+      setMsg(`Falha ao registrar: ${e?.message || "erro"}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="linha-metro metro-elegante metro-premium">
+        {linhaMetro.etapas.map((etapa) => {
+          const st = etapa?.status || "nao_iniciada";
+          const codigo = etapa?.codigo;
+          const ordemTxt = etapa?.ordem != null ? `${etapa.ordem}. ` : "";
+          const aberto = openCodigo === codigo;
+          const ur = etapa?.ultimo_registro;
+          const regs = Array.isArray(etapa?.registros) ? etapa.registros : [];
+
+          return (
+            <div key={codigo || etapa?.ordem} className={`etapa-linha metro-card metro-card-${st}`}>
+              <button
+                type="button"
+                className="metro-click"
+                onClick={() => setOpenCodigo(aberto ? null : codigo)}
+              >
+                <div className={`etapa-bolinha etapa-bolinha-${st}`} aria-hidden="true" />
+
+                <div className="etapa-conteudo">
+                  <div className="etapa-titulo">
+                    {ordemTxt}
+                    {etapa?.nome || "Etapa"}
+                  </div>
+                  <div className="etapa-descricao">{etapa?.descricao || ""}</div>
+                </div>
+
+                <span className={`badge-status badge-pequena badge-${st}`}>{label(st)}</span>
+              </button>
+
+              {aberto && (
+                <div className="metro-detalhe">
+                  <div className="metro-detalhe-top">
+                    <div>
+                      <div className="metro-detalhe-titulo">Último registro</div>
+                      {ur ? (
+                        <div className="texto-suave" style={{ marginTop: 6 }}>
+                          <div>
+                            <strong>Responsável:</strong> {ur?.responsavel_nome || "—"}
+                          </div>
+                          <div>
+                            <strong>Data/hora:</strong> {fmtDataHora(ur?.data_hora)}
+                          </div>
+                          {ur?.atendimento_id ? (
+                            <div>
+                              <strong>Atendimento:</strong> #{ur.atendimento_id}
+                            </div>
+                          ) : null}
+                          {ur?.obs ? (
+                            <div style={{ marginTop: 6 }}>
+                              <strong>Obs:</strong> {ur.obs}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="texto-suave" style={{ marginTop: 6 }}>
+                          Nenhum registro ainda para esta etapa.
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="btn btn-secundario btn-secundario-mini"
+                        onClick={() => abrirModalRegistrar(codigo)}
+                        disabled={!casoId}
+                      >
+                        Registrar avanço
+                      </button>
+                    </div>
+                  </div>
+
+                  {ur?.encaminhamentos?.length ? (
+                    <div className="metro-box">
+                      <div className="metro-box-title">Encaminhamentos vinculados</div>
+                      <ul className="metro-list">
+                        {ur.encaminhamentos.map((e) => (
+                          <li key={e.id}>
+                            <strong>#{e.id}</strong> — {nomeMunicipio(e.municipio_origem_id)} → {nomeMunicipio(e.municipio_destino_id)} — <span className="muted">{e.status}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {regs.length ? (
+                    <div className="metro-box">
+                      <div className="metro-box-title">Histórico da etapa (últimos registros)</div>
+                      <ul className="metro-list">
+                        {regs.slice(0, 5).map((r) => (
+                          <li key={r.id}>
+                            <div>
+                              <strong>{r.responsavel_nome || "—"}</strong> — {fmtDataHora(r.data_hora)}
+                            </div>
+                            {r.obs ? <div className="muted">{r.obs}</div> : null}
+                            {r.encaminhamentos?.length ? (
+                              <div className="muted">Encaminhamentos: {r.encaminhamentos.map((x) => `#${x.id}`).join(", ")}</div>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {modalEtapa && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">Registrar avanço — {modalEtapa}</div>
+                <div className="muted">Registra histórico (não muda etapa automaticamente).</div>
+              </div>
+              <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={() => setModalEtapa(null)}>
+                Fechar
+              </button>
+            </div>
+
+            {msg ? <div className="erro-global" style={{ marginTop: 10 }}>{msg}</div> : null}
+
+            <div className="modal-body">
+              <label className="form-label">
+                Observação (curta)
+                <textarea className="input" rows={3} value={obs} onChange={(e) => setObs(e.target.value)} />
+              </label>
+
+              <label className="form-label">
+                Vincular atendimento (opcional)
+                <select className="input" value={atendimentoId} onChange={(e) => setAtendimentoId(e.target.value)}>
+                  <option value="">Não vincular</option>
+                  {atendimentos.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      #{a.id} — {(a.tipo_atendimento || a.tipo || "atendimento")} — {a.data_atendimento ? new Date(a.data_atendimento).toLocaleDateString("pt-BR") : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="form-label" style={{ marginTop: 6 }}>
+                Vincular encaminhamentos intermunicipais (opcional)
+              </div>
+              <div className="metro-enc-list">
+                {loadingEnc ? (
+                  <div className="texto-suave">Carregando encaminhamentos…</div>
+                ) : encaminhamentos.length ? (
+                  encaminhamentos.map((e) => (
+                    <label key={e.id} className="metro-enc-item">
+                      <input
+                        type="checkbox"
+                        checked={!!encSel[e.id]}
+                        onChange={(ev) => setEncSel({ ...encSel, [e.id]: ev.target.checked })}
+                      />
+                      <span>
+                        <strong>#{e.id}</strong> — {nomeMunicipio(e.municipio_origem_id)} → {nomeMunicipio(e.municipio_destino_id)} — <span className="muted">{e.status}</span>
+                      </span>
+                    </label>
+                  ))
+                ) : (
+                  <div className="texto-suave">Nenhum encaminhamento intermunicipal encontrado para este caso.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn" onClick={salvarRegistro} disabled={saving}>
+                {saving ? "Salvando…" : "Salvar registro"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListaAtendimentos({ atendimentos = [] }) {
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [filtroPeriodo, setFiltroPeriodo] = useState("30");
+
+  const lista = Array.isArray(atendimentos) ? atendimentos : [];
+
+  const ordenados = [...lista].sort((a, b) => {
+    const da = a?.data_atendimento ? new Date(a.data_atendimento).getTime() : 0;
+    const db = b?.data_atendimento ? new Date(b.data_atendimento).getTime() : 0;
+    return db - da;
+  });
+
+  const tiposEncontrados = Array.from(
+    new Set(
+      ordenados
+        .map((at) => at?.tipo_atendimento || at?.tipo)
+        .filter(Boolean)
+    )
+  );
+
+  const agora = new Date();
+
+  function fmtDataHora(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString("pt-BR");
+  }
+
+  const filtrados = ordenados.filter((at) => {
+    const tipoChave = at?.tipo_atendimento || at?.tipo;
+
+    if (filtroTipo !== "todos" && tipoChave !== filtroTipo) return false;
+
+    if (filtroPeriodo !== "todos" && at?.data_atendimento) {
+      const diasFiltro = Number(filtroPeriodo);
+      const d = new Date(at.data_atendimento);
+      if (!isNaN(d.getTime())) {
+        const diffMs = agora.getTime() - d.getTime();
+        const diffDias = diffMs / (1000 * 60 * 60 * 24);
+        if (diffDias > diasFiltro) return false;
+      }
+    }
+    return true;
+  });
+
+  return (
+    <>
+      <div className="filtros-atendimentos">
+        <div className="filtro-campo">
+          <span className="filtro-label">Tipo</span>
+          <select
+            className="input filtro-select"
+            value={filtroTipo}
+            onChange={(e) => setFiltroTipo(e.target.value)}
+          >
+            <option value="todos">Todos os tipos</option>
+            {tiposEncontrados.map((t) => (
+              <option key={t} value={t}>
+                {formatarTipo(t)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filtro-campo">
+          <span className="filtro-label">Período</span>
+          <select
+            className="input filtro-select"
+            value={filtroPeriodo}
+            onChange={(e) => setFiltroPeriodo(e.target.value)}
+          >
+            <option value="7">Últimos 7 dias</option>
+            <option value="30">Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="todos">Todos os períodos</option>
+          </select>
+        </div>
+
+        <div className="filtro-resumo">
+          {filtrados.length} atendimento{filtrados.length === 1 ? "" : "s"} encontrado
+          {filtrados.length === 1 ? "" : "s"}.
+        </div>
+      </div>
+
+      <ul className="lista-atendimentos">
+        {filtrados.length === 0 ? (
+          <li className="texto-suave">Nenhum atendimento no filtro selecionado.</li>
+        ) : (
+          filtrados.map((at) => {
+            const tipo = at?.tipo_atendimento || at?.tipo || "atendimento";
+            const local = at?.local_atendimento || at?.local || at?.localizacao || "";
+            const equip = at?.equipamento || at?.equipamento_atendimento || "";
+            const resultado = at?.resultado || at?.resultado_atendimento || "";
+            const texto =
+              at?.descricao ||
+              at?.descricao_atendimento ||
+              at?.observacao ||
+              at?.obs ||
+              "";
+
+            return (
+              <li
+                key={at?.id || `${tipo}-${at?.data_atendimento || Math.random()}`}
+                className="item-atendimento"
+              >
+                <div className="item-atendimento-header">
+                  <div className="item-atendimento-titulo">{formatarTipo(tipo)}</div>
+                  <div className="item-atendimento-sub">{fmtDataHora(at?.data_atendimento)}</div>
+                </div>
+
+                <div className="item-atendimento-detalhes">
+                  {local ? (
+                    <span>
+                      <b>Local:</b> {local}
+                    </span>
+                  ) : null}
+                  {equip ? (
+                    <span>
+                      <b>Equip.:</b> {equip}
+                    </span>
+                  ) : null}
+                  {resultado ? (
+                    <span>
+                      <b>Resultado:</b> {resultado}
+                    </span>
+                  ) : null}
+                  {at?.caso_id ? (
+                    <span>
+                      <b>Caso:</b> {at.caso_id}
+                    </span>
+                  ) : null}
+                </div>
+
+                {texto ? <div className="item-atendimento-texto">{texto}</div> : null}
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </>
+  );
+}
+
+function TelaFichaAtendimento(props) {
+  const {
+    pessoas,
+    casos,
+    fichaPessoaId,
+    setFichaPessoaId,
+    fichaCasoId,
+    setFichaCasoId,
+    fichaDataHora,
+    setFichaDataHora,
+    fichaLocal,
+    setFichaLocal,
+    fichaTipo,
+    setFichaTipo,
+    fichaEquipamento,
+    setFichaEquipamento,
+    fichaResultado,
+    setFichaResultado,
+    fichaDescricao,
+    setFichaDescricao,
+    salvarFicha,
+    loading,
+  } = props;
+
+  const casosDaPessoa = fichaPessoaId
+    ? casos.filter((c) => toIntId(c.pessoa_id) === toIntId(fichaPessoaId))
+    : [];
+
+  function getNomePessoa(id) {
+    const p = pessoas.find((x) => toIntId(x.id) === toIntId(id));
+    return p ? p.nome_social || p.nome_civil || "Pessoa" : "Pessoa";
+  }
+
+  return (
+    <div className="layout-1col">
+      <PageHero
+        kicker="Atendimento"
+        title="Ficha de atendimento"
+        subtitle="Registre um atendimento vinculado a uma pessoa e, se desejar, a um caso Pop Rua em andamento."
+        tips={["Use tipo/local/equipamento para padronizar.", "Vincule a um caso quando houver (melhor rastreabilidade)."]}
+        badge="Atendimento"
+      />
+      <section className="card card-wide">
+        <form onSubmit={salvarFicha}>
+          <div className="ficha-grid">
+            <div>
+              <div className="ficha-section-title">Contexto</div>
+
+              <label className="form-label">
+                Pessoa atendida
+                <select
+                  className="input"
+                  value={fichaPessoaId}
+                  onChange={(e) => {
+                    setFichaPessoaId(e.target.value);
+                    setFichaCasoId("");
+                  }}
+                >
+                  <option value="">Selecione...</option>
+                  {pessoas.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nome_social || p.nome_civil}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-label">
+                Vincular a um caso (opcional)
+                <select className="input" value={fichaCasoId} onChange={(e) => setFichaCasoId(e.target.value)} disabled={!fichaPessoaId}>
+                  <option value="">{fichaPessoaId ? "Selecione um caso..." : "Selecione a pessoa primeiro"}</option>
+                  {casosDaPessoa.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.etapa_atual ? `${getNomePessoa(c.pessoa_id)} — etapa ${c.etapa_atual} (${c.status})` : `Caso — (${c.status})`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-label">
+                Data e hora do atendimento
+                <input type="datetime-local" className="input" value={fichaDataHora} onChange={(e) => setFichaDataHora(e.target.value)} />
+              </label>
+
+              <label className="form-label">
+                Local do atendimento
+                <input className="input" placeholder="Praça, CRAS, CREAS, unidade de acolhimento..." value={fichaLocal} onChange={(e) => setFichaLocal(e.target.value)} />
+              </label>
+            </div>
+
+            <div>
+              <div className="ficha-section-title">Detalhes</div>
+
+              <label className="form-label">
+                Tipo de atendimento
+                <select className="input" value={fichaTipo} onChange={(e) => setFichaTipo(e.target.value)}>
+                  <option value="abordagem_rua">Abordagem na rua</option>
+                  <option value="atendimento_cras">Atendimento no CRAS</option>
+                  <option value="atendimento_creas">Atendimento no CREAS</option>
+                  <option value="acolhimento">Acolhimento</option>
+                </select>
+              </label>
+
+              <label className="form-label">
+                Equipamento / unidade responsável
+                <input className="input" placeholder="Equipe de Abordagem, CRAS Centro, CREAS..." value={fichaEquipamento} onChange={(e) => setFichaEquipamento(e.target.value)} />
+              </label>
+
+              <label className="form-label">
+                Resultado
+                <select className="input" value={fichaResultado} onChange={(e) => setFichaResultado(e.target.value)}>
+                  <option value="acompanhamento_continuado">Acompanhamento continuado</option>
+                  <option value="encaminhamento_servico">Encaminhamento para serviço</option>
+                  <option value="alta">Alta do acompanhamento</option>
+                </select>
+              </label>
+
+              <label className="form-label">
+                Descrição / relato (opcional)
+                <textarea className="input" rows={4} placeholder="Resumo do que foi realizado..." value={fichaDescricao} onChange={(e) => setFichaDescricao(e.target.value)} />
+              </label>
+            </div>
+          </div>
+
+          <div className="card-footer-right">
+            <button type="submit" className="btn btn-primario" disabled={loading}>
+              {loading ? "Salvando..." : "Salvar atendimento"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function TelaCadastroPessoa(props) {
+  const {
+    cadNomeSocial,
+    setCadNomeSocial,
+    cadNomeCivil,
+    setCadNomeCivil,
+    cadCPF,
+    setCadCPF,
+    cadMunicipioOrigemId,
+    setCadMunicipioOrigemId,
+    cadTempoRua,
+    setCadTempoRua,
+    cadLocalReferencia,
+    setCadLocalReferencia,
+    cadDataNascimento,
+    setCadDataNascimento,
+    cadGenero,
+    setCadGenero,
+    cadEstadoCivil,
+    setCadEstadoCivil,
+    cadObservacoesGerais,
+    setCadObservacoesGerais,
+    salvarPessoa,
+    loading,
+  } = props;
+
+  return (
+    <div className="layout-1col cadastro-shell">
+      <PageHero
+        kicker="Pessoas"
+        title="Novo cadastro de pessoa"
+        subtitle="Registre os dados mínimos para atendimento. Campos sensíveis devem ser preenchidos apenas quando necessários e por perfis autorizados."
+        tips={[
+          "Nome social e município de origem ajudam na busca e referência.",
+          "Use observações operacionais (evite termos clínicos).",
+        ]}
+        badge="Cadastro"
+        rightText={
+          <>
+            Você pode completar detalhes depois na <strong>Ficha da pessoa</strong>.
+          </>
+        }
+      />
+
+      <form className="cadastro-form" onSubmit={salvarPessoa}>
+        <section className="card cadastro-card">
+          <div className="card-header-row">
+            <h3 style={{ margin: 0 }}>Identificação</h3>
+            <span className="texto-suave">Dados básicos</span>
+          </div>
+          <div className="grid-2cols" style={{ marginTop: 10 }}>
+            <label className="form-label">
+              Nome social
+              <input className="input" value={cadNomeSocial} onChange={(e) => setCadNomeSocial(e.target.value)} />
+            </label>
+
+            <label className="form-label">
+              Nome civil
+              <input className="input" value={cadNomeCivil} onChange={(e) => setCadNomeCivil(e.target.value)} />
+            </label>
+
+            <label className="form-label">
+              CPF
+              <input className="input" value={cadCPF} onChange={(e) => setCadCPF(e.target.value)} />
+            </label>
+
+            <label className="form-label">
+              Data de nascimento
+              <input type="date" className="input" value={cadDataNascimento} onChange={(e) => setCadDataNascimento(e.target.value)} />
+            </label>
+
+            <label className="form-label">
+              Gênero
+              <select className="input" value={cadGenero} onChange={(e) => setCadGenero(e.target.value)}>
+                <option value="">Selecione...</option>
+                <option value="masculino">Masculino</option>
+                <option value="feminino">Feminino</option>
+                <option value="nao_binario">Não binário</option>
+                <option value="outro">Outro</option>
+                <option value="nao_informado">Prefere não informar</option>
+              </select>
+            </label>
+
+            <label className="form-label">
+              Estado civil
+              <select className="input" value={cadEstadoCivil} onChange={(e) => setCadEstadoCivil(e.target.value)}>
+                <option value="">Selecione...</option>
+                <option value="solteiro">Solteiro(a)</option>
+                <option value="casado">Casado(a)</option>
+                <option value="uniao_estavel">União estável</option>
+                <option value="separado">Separado(a)</option>
+                <option value="divorciado">Divorciado(a)</option>
+                <option value="viuvo">Viúvo(a)</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section className="card cadastro-card">
+          <div className="card-header-row">
+            <h3 style={{ margin: 0 }}>Situação de rua e território</h3>
+            <span className="texto-suave">Referência e contexto</span>
+          </div>
+          <div className="grid-2cols" style={{ marginTop: 10 }}>
+            <label className="form-label">
+              Município de origem (ID)
+              <input className="input" value={cadMunicipioOrigemId} onChange={(e) => setCadMunicipioOrigemId(e.target.value)} />
+            </label>
+
+            <label className="form-label">
+              Tempo de rua
+              <input className="input" placeholder="Ex.: 6 meses, 2 anos..." value={cadTempoRua} onChange={(e) => setCadTempoRua(e.target.value)} />
+            </label>
+
+            <label className="form-label" style={{ gridColumn: "1 / -1" }}>
+              Local de referência
+              <input className="input" placeholder="Praça, bairro, região..." value={cadLocalReferencia} onChange={(e) => setCadLocalReferencia(e.target.value)} />
+            </label>
+
+            <label className="form-label" style={{ gridColumn: "1 / -1" }}>
+              Observações gerais (operacional)
+              <textarea className="input" rows={4} value={cadObservacoesGerais} onChange={(e) => setCadObservacoesGerais(e.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <div className="card-footer-right">
+          <button type="submit" className="btn btn-primario" disabled={loading}>
+            {loading ? "Salvando..." : "Salvar cadastro"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* =====================
+   NOVAS TELAS (substituem “Em construção”)
+   ===================== */
+
+function TelaDashboardPopRua({
+  apiBase,
+  apiFetch,
+  perfilAtivo,
+  municipioAtivoId,
+  municipioAtivoNome,
+  municipios,
+  pessoas,
+  casos,
+}) {
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [erroStats, setErroStats] = useState("");
+
+  const totalPessoasLocal = Array.isArray(pessoas) ? pessoas.length : 0;
+  const totalCasosLocal = Array.isArray(casos) ? casos.length : 0;
+
+  const porEtapa = useMemo(() => {
+    const acc = new Map();
+    (casos || []).forEach((c) => {
+      const k = c?.etapa_atual || "—";
+      acc.set(k, (acc.get(k) || 0) + 1);
+    });
+    return Array.from(acc.entries()).sort((a, b) => b[1] - a[1]);
+  }, [casos]);
+
+  const emAndamento = (casos || []).filter((c) => {
+    const st = String(c?.status || "").toLowerCase();
+    return st !== "encerrado" && c?.ativo !== false;
+  }).length;
+  const encerrados = (casos || []).filter(
+    (c) => String(c?.status || "").toLowerCase() === "encerrado"
+  ).length;
+  const arquivados = (casos || []).filter((c) => c?.ativo === false).length;
+
+  const fetchStats = async () => {
+    try {
+      setLoadingStats(true);
+      setErroStats("");
+      const qs = municipioAtivoId ? `?municipio_id=${encodeURIComponent(municipioAtivoId)}` : "";
+      const url = `${apiBase}/dashboard/overview${qs}`;
+      const res = await (typeof apiFetch === "function" ? apiFetch(url) : fetch(url));
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(msg || `Erro ao carregar dashboard (${res.status})`);
+      }
+      const data = await res.json();
+      setStats(data);
+    } catch (e) {
+      console.error(e);
+      setErroStats(e?.message || "Erro ao carregar dashboard.");
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase, municipioAtivoId]);
+
+  const toBarItems = (obj) => {
+    if (!obj || typeof obj !== "object") return [];
+    return Object.entries(obj)
+      .map(([label, value]) => ({ label, value: Number(value) || 0 }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  const BarList = ({ title, subtitle, items }) => {
+    const arr = Array.isArray(items) ? items : [];
+    const max = Math.max(1, ...arr.map((x) => x.value || 0));
+    return (
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 900 }}>{title}</div>
+            {subtitle ? <div className="texto-suave" style={{ marginTop: 4 }}>{subtitle}</div> : null}
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          {arr.length === 0 ? (
+            <div className="texto-suave">Sem dados para exibir.</div>
+          ) : (
+            arr.map((it) => (
+              <div key={it.label} style={{ display: "grid", gridTemplateColumns: "160px 1fr 52px", gap: 10, alignItems: "center" }}>
+                <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={it.label}>{it.label}</div>
+                <div className="dashboard-progress-track">
+                  <div className="dashboard-progress-fill andamento" style={{ width: `${Math.round((it.value / max) * 100)}%` }} />
+                </div>
+                <div style={{ textAlign: "right", fontWeight: 800 }}>{it.value}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const generoItems = toBarItems(stats?.genero);
+  const faixaItems = [
+    { label: "0-17", value: Number(stats?.faixa_etaria?.["0-17"]) || 0 },
+    { label: "18-29", value: Number(stats?.faixa_etaria?.["18-29"]) || 0 },
+    { label: "30-44", value: Number(stats?.faixa_etaria?.["30-44"]) || 0 },
+    { label: "45-59", value: Number(stats?.faixa_etaria?.["45-59"]) || 0 },
+    { label: "60+", value: Number(stats?.faixa_etaria?.["60+"]) || 0 },
+    { label: "Não informado", value: Number(stats?.faixa_etaria?.["Não informado"]) || 0 },
+  ].filter((x) => x.value > 0 || x.label === "Não informado");
+
+  const origemItems = (stats?.origem_cidades || []).map((x) => ({
+    label: x?.municipio_nome || `Município ${x?.municipio_id}`,
+    value: Number(x?.count) || 0,
+  }));
+
+  const depItems = [
+    { label: "Sim", value: Number(stats?.dependencia_quimica?.Sim) || 0 },
+    { label: "Não", value: Number(stats?.dependencia_quimica?.Não) || 0 },
+    { label: "Não informado", value: Number(stats?.dependencia_quimica?.["Não informado"]) || 0 },
+  ];
+
+  const totalPessoas = Number(stats?.total_pessoas) || totalPessoasLocal;
+  const totalCasos = Number(stats?.total_casos) || totalCasosLocal;
+  const passouSaude = Number(stats?.passagens?.saude) || 0;
+  const passouAssist = Number(stats?.passagens?.assistencia_social) || 0;
+
+  return (
+    <div className="layout-1col">
+      <section className="card card-wide">
+        <div className="card-header-row">
+          <div>
+            <h2>Dashboard Pop Rua</h2>
+            <p className="texto-suave" style={{ marginTop: 6 }}>
+              Perfil: <strong>{String(perfilAtivo || "—")}</strong>
+              {municipioAtivoNome ? <> · Município: <strong>{municipioAtivoNome}</strong></> : null}
+            </p>
+          </div>
+
+          <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={fetchStats}>
+            {loadingStats ? "Atualizando..." : "Atualizar"}
+          </button>
+        </div>
+
+        {erroStats ? <p className="erro-global">{erroStats}</p> : null}
+
+        <div className="dashboard-grid" style={{ marginTop: 12 }}>
+          <div className="dashboard-metric">
+            <div className="dashboard-metric-label">Pessoas cadastradas</div>
+            <div className="dashboard-metric-value">{totalPessoas}</div>
+          </div>
+
+          <div className="dashboard-metric">
+            <div className="dashboard-metric-label">Casos totais</div>
+            <div className="dashboard-metric-value">{totalCasos}</div>
+          </div>
+
+          <div className="dashboard-metric">
+            <div className="dashboard-metric-label">Status (casos)</div>
+            <div className="dashboard-metric-value">{emAndamento}</div>
+            <div className="dashboard-metric-sub">
+              Em andamento · Encerrados: {encerrados} · Arquivados: {arquivados}
+            </div>
+          </div>
+
+          <div className="dashboard-metric">
+            <div className="dashboard-metric-label">Passaram pela Saúde</div>
+            <div className="dashboard-metric-value">{passouSaude}</div>
+            <div className="dashboard-metric-sub">(pessoas com registro intersetorial)</div>
+          </div>
+
+          <div className="dashboard-metric">
+            <div className="dashboard-metric-label">Passaram pela Assistência</div>
+            <div className="dashboard-metric-value">{passouAssist}</div>
+            <div className="dashboard-metric-sub">(pessoas com ao menos 1 atendimento)</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <h3 className="dashboard-section-title">Casos por etapa</h3>
+          <p className="texto-suave">Resumo para orientar priorização e planejamento.</p>
+
+          <ul className="dashboard-stage-list">
+            {porEtapa.slice(0, 10).map(([etapa, qtd]) => (
+              <li key={String(etapa)} className="dashboard-stage-row">
+                <div className="dashboard-stage-info">
+                  <div className="dashboard-stage-name">{String(etapa)}</div>
+                  <div className="dashboard-stage-count">{qtd} caso(s)</div>
+                </div>
+                <div className="dashboard-progress-track">
+                  <div className="dashboard-progress-fill andamento" style={{ width: totalCasos ? `${Math.round((qtd / totalCasos) * 100)}%` : "0%" }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+          <BarList title="Homens x Mulheres (gênero)" subtitle="Distribuição por gênero" items={generoItems} />
+          <BarList title="Faixa etária" subtitle="Baseada em data de nascimento (agregado)" items={faixaItems} />
+          <BarList title="Origem (cidades)" subtitle="Top 10 por município de origem" items={origemItems} />
+          <BarList title="Dependência química" subtitle="Indicador operacional (sim/não)" items={depItems} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TelaGestaoRegional({ perfilAtivo, municipios, casos }) {
+  const perfil = String(perfilAtivo || "").toLowerCase();
+  const pode = perfil === "admin" || perfil === "gestor_consorcio";
+
+  const nomeMuni = useMemo(() => {
+    const m = new Map();
+    (municipios || []).forEach((x) => {
+      const id = Number(x?.id);
+      if (!Number.isNaN(id)) m.set(id, x?.nome || x?.nome_municipio || "Município");
+    });
+    return m;
+  }, [municipios]);
+
+  const rows = useMemo(() => {
+    const acc = new Map();
+    (casos || []).forEach((c) => {
+      const mid = Number(c?.municipio_id || 0);
+      const k = Number.isFinite(mid) ? mid : 0;
+      if (!acc.has(k)) acc.set(k, { municipio_id: k, total: 0, em_andamento: 0, encerrados: 0, arquivados: 0 });
+      const r = acc.get(k);
+      r.total += 1;
+      if (c?.ativo === false) r.arquivados += 1;
+      const st = String(c?.status || "").toLowerCase();
+      if (st === "encerrado") r.encerrados += 1;
+      else r.em_andamento += 1;
+    });
+    return Array.from(acc.values()).sort((a, b) => b.total - a.total);
+  }, [casos]);
+
+  return (
+    <div className="layout-1col">
+      <section className="card card-wide">
+        <div className="card-header-row">
+          <div>
+            <h2>Gestão Regional (Consórcio)</h2>
+            <p className="texto-suave">Painel agregado por município para coordenação regional.</p>
+          </div>
+        </div>
+
+        {!pode ? (
+          <p className="erro-global">
+            Seu perfil não tem acesso ao painel regional. (Acesso: Admin / Gestor do consórcio)
+          </p>
+        ) : (
+          <div className="regional-table-wrapper" style={{ marginTop: 10 }}>
+            <table className="regional-table">
+              <thead>
+                <tr>
+                  <th>Município</th>
+                  <th>Total</th>
+                  <th>Em andamento</th>
+                  <th>Encerrados</th>
+                  <th>Arquivados</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ padding: 12 }} className="texto-suave">
+                      Sem dados para exibir.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((r) => (
+                    <tr key={String(r.municipio_id)}>
+                      <td>{nomeMuni.get(r.municipio_id) || (r.municipio_id ? `Município #${r.municipio_id}` : "—")}</td>
+                      <td>{r.total}</td>
+                      <td>{r.em_andamento}</td>
+                      <td>{r.encerrados}</td>
+                      <td>{r.arquivados}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TelaProtocoloModulo({ moduloNumero, usuarioLogado, pessoas, casos, casoSelecionado }) {
+  const [casoId, setCasoId] = useState(casoSelecionado?.id ? String(casoSelecionado.id) : "");
+  const [notas, setNotas] = useState("");
+  const [checks, setChecks] = useState({});
+
+  const casosOrdenados = useMemo(() => {
+    const arr = Array.isArray(casos) ? [...casos] : [];
+    arr.sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
+    return arr;
+  }, [casos]);
+
+  useEffect(() => {
+    if (casoSelecionado?.id && !casoId) setCasoId(String(casoSelecionado.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [casoSelecionado?.id]);
+
+  const pessoaNome = useMemo(() => {
+    const c = casosOrdenados.find((x) => String(x?.id) === String(casoId));
+    const pid = c?.pessoa_id;
+    if (!pid) return "Pessoa";
+    const p = (pessoas || []).find((pp) => Number(pp?.id) === Number(pid));
+    return p?.nome_social || p?.nome_civil || "Pessoa";
+  }, [casoId, casosOrdenados, pessoas]);
+
+  const passos = useMemo(() => {
+    if (Number(moduloNumero) === 1) {
+      return [
+        { id: "acolhida", titulo: "Acolhida e escuta qualificada", desc: "Registro mínimo do contato e necessidades imediatas." },
+        { id: "identificacao", titulo: "Identificação e registro", desc: "Dados básicos, documentos e local de referência." },
+        { id: "vinculos", titulo: "Vínculos e rede", desc: "Rede familiar e serviços já utilizados." },
+        { id: "risco", titulo: "Risco e vulnerabilidade", desc: "Avaliação social para priorização." },
+      ];
+    }
+    return [
+      { id: "pia", titulo: "PIA / Plano", desc: "Metas, prazos e responsáveis (intersetorial)." },
+      { id: "execucao", titulo: "Execução", desc: "Encaminhamentos e registros de retorno/logística." },
+      { id: "monitoramento", titulo: "Monitoramento", desc: "Acompanhamento e reavaliação." },
+      { id: "saida", titulo: "Saída qualificada", desc: "Critérios de encerramento e registro final." },
+    ];
+  }, [moduloNumero]);
+
+  const storageKey = useMemo(
+    () => `poprua_protocolo_m${moduloNumero}_caso_${casoId || "sem_caso"}`,
+    [moduloNumero, casoId]
+  );
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) {
+        setNotas("");
+        setChecks({});
+        return;
+      }
+      const j = JSON.parse(raw);
+      setNotas(j?.notas || "");
+      setChecks(j?.checks || {});
+    } catch {
+      setNotas("");
+      setChecks({});
+    }
+  }, [storageKey]);
+
+  function salvarLocal() {
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          moduloNumero,
+          casoId,
+          pessoa: pessoaNome,
+          salvoEm: new Date().toISOString(),
+          salvoPor: usuarioLogado?.nome || "Usuário",
+          notas,
+          checks,
+        })
+      );
+      alert("Protocolo salvo.");
+    } catch (e) {
+      console.error(e);
+      alert("Falha ao salvar protocolo.");
+    }
+  }
+
+  function copiarResumo() {
+    const texto = [
+      `POP RUA — Protocolo Módulo ${moduloNumero}`,
+      `Caso: ${casoId || "—"} | Pessoa: ${pessoaNome}`,
+      `Responsável: ${usuarioLogado?.nome || "—"}`,
+      "",
+      "Checklist:",
+      ...passos.map((p) => `- [${checks[p.id] ? "x" : " "}] ${p.titulo}`),
+      "",
+      "Notas:",
+      notas || "—",
+    ].join("\n");
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(texto).then(() => alert("Resumo copiado!"));
+    } else {
+      alert(texto);
+    }
+  }
+
+  return (
+    <div className="layout-1col">
+      <section className="card card-wide">
+        <div className="card-header-row">
+          <div>
+            <h2>Protocolo Pop Rua · Módulo {moduloNumero}</h2>
+            <p className="texto-suave" style={{ marginTop: 6 }}>
+              Pessoa: <strong>{pessoaNome}</strong> · Caso: <strong>#{casoId || "—"}</strong>
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" className="btn btn-secundario btn-secundario-mini" onClick={copiarResumo}>
+              Copiar resumo
+            </button>
+            <button type="button" className="btn btn-primario btn-primario-mini" onClick={salvarLocal}>
+              Salvar
+            </button>
+          </div>
+        </div>
+
+        <div className="grid-2cols" style={{ marginTop: 10 }}>
+          <label className="form-label">
+            Selecionar caso
+            <select className="input" value={casoId} onChange={(e) => setCasoId(e.target.value)}>
+              <option value="">Selecione...</option>
+              {casosOrdenados.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Caso #{c.id} · Etapa {c.etapa_atual || "—"} · {c.status || "—"}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="texto-suave" style={{ alignSelf: "end" }}>
+            Checklist + notas ficam salvos no navegador (localStorage).
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <h3 style={{ margin: 0 }}>Checklist</h3>
+          <p className="texto-suave" style={{ marginTop: 6 }}>Marque o que já foi realizado neste caso.</p>
+
+          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+            {passos.map((p) => (
+              <div key={p.id} className="item-atendimento">
+                <div className="item-atendimento-header">
+                  <div>
+                    <div className="item-atendimento-titulo">{p.titulo}</div>
+                    <div className="item-atendimento-sub">{p.desc}</div>
+                  </div>
+
+                  <label className="texto-suave" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!checks[p.id]}
+                      onChange={(e) => setChecks((old) => ({ ...old, [p.id]: !!e.target.checked }))}
+                      style={{ width: 16, height: 16 }}
+                    />
+                    Concluído
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <h3 style={{ margin: 0 }}>Notas</h3>
+          <p className="texto-suave" style={{ marginTop: 6 }}>Observações operacionais (sem dados clínicos).</p>
+
+          <label className="form-label" style={{ marginTop: 10 }}>
+            Notas do módulo
+            <textarea
+              className="input"
+              rows={5}
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              placeholder="Ex.: metas, pendências, retorno agendado, encaminhamentos realizados..."
+            />
+          </label>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* =====================
+   FUNÇÕES UTIL
+   ===================== */
+function formatarDataHora(isoString) {
+  if (!isoString) return "Data não informada";
+  try {
+    const d = new Date(isoString);
+    const dia = String(d.getDate()).padStart(2, "0");
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const ano = d.getFullYear();
+    const hora = String(d.getHours()).padStart(2, "0");
+    const min = String(d.getMinutes()).padStart(2, "0");
+    return `${dia}/${mes}/${ano} ${hora}:${min}`;
+  } catch {
+    return isoString;
+  }
+}
+
+function formatarTipo(tipo) {
+  if (!tipo) return "Atendimento";
+  const mapa = {
+    abordagem_rua: "Abordagem na rua",
+    atendimento_cras: "Atendimento no CRAS",
+    atendimento_creas: "Atendimento no CREAS",
+    acolhimento: "Acolhimento",
+  };
+  return mapa[tipo] || String(tipo).replace(/_/g, " ");
+}
+
+function formatarResultado(resultado, foiRealizado) {
+  if (foiRealizado === false) return "Não realizado";
+  if (!resultado) return "Realizado";
+  const mapa = {
+    acompanhamento_continuado: "Acompanhamento continuado",
+    encaminhamento_servico: "Encaminhamento",
+    alta: "Alta do acompanhamento",
+  };
+  return mapa[resultado] || String(resultado).replace(/_/g, " ");
+}
+
+export default App;

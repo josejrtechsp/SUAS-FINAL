@@ -1,0 +1,208 @@
+import React, { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import "./Portal.css";
+
+export default function PreLoginPage({ onEntrar }) {
+  const [busca, setBusca] = useState("");
+  const [guiaFiltro, setGuiaFiltro] = useState("");
+
+  const chips = useMemo(
+    () => ["Tipificação", "NOB SUAS", "CadÚnico", "RMA", "Prontuário SUAS", "Vigilância", "Pop Rua", "OSCs", "CMAS"],
+    []
+  );
+
+  const guiaTopicos = useMemo(
+    () => [
+      { icone: "📌", titulo: "Tipificação e serviços", texto: "O que é cada serviço, para quem é, e como registrar com padrão (sem improviso).", tags: ["Tipificação"] },
+      { icone: "🧾", titulo: "RMA e relatórios", texto: "Como organizar registros para gerar evidência, relatórios e prestação de contas.", tags: ["RMA"] },
+      { icone: "🛡️", titulo: "LGPD na prática (mínimo necessário)", texto: "Acesso por perfil, campos sensíveis, auditoria e boas práticas para reduzir risco institucional.", tags: ["LGPD"] },
+      { icone: "🧭", titulo: "Fluxos recomendados (por etapas)", texto: "Etapas, responsabilidades, devolutivas e validação: o caso não “se perde” na rede.", tags: ["Fluxo"] },
+      { icone: "🤝", titulo: "Parcerias e OSCs", texto: "Documentos, execução, acompanhamento e transparência com trilha de evidências.", tags: ["OSCs"] },
+      { icone: "🏛️", titulo: "Conselho (CMAS) e controle social", texto: "Relatórios e evidências certas para deliberação e fiscalização, com rastreabilidade.", tags: ["CMAS"] },
+    ],
+    []
+  );
+
+  const modulos = useMemo(
+    () => [
+      { id: "cras",  icone: "🏠", titulo: "CRAS", texto: "Triagem, acompanhamento familiar e encaminhamentos com padrão." },
+      { id: "creas",  icone: "🧾", titulo: "CREAS", texto: "Casos complexos com etapas, prazos e contexto preservado." },
+      { id: "poprua",  icone: "🚶‍♀️", titulo: "Pop Rua", texto: "Abordagem, busca ativa e gestão de caso com rastreabilidade." },
+      { id: "acolhimentos",  icone: "🛏️", titulo: "Acolhimentos", texto: "Vagas, entradas/saídas, acompanhamento e relatórios claros." },
+      { id: "gestao",  icone: "🎯", titulo: "Gestão", texto: "Painel do município: gargalos, produtividade e indicadores." },
+      { id: "vigilancia",  icone: "🗺️", titulo: "Vigilância", texto: "Indicadores e visão territorial para priorização e evidências." },
+      { id: "terceiro_setor",  icone: "🤝", titulo: "Terceiro Setor", texto: "Parcerias/OSCs: execução, documentos e prestação de contas." },
+      { id: "conselho",  icone: "🏛️", titulo: "Conselho", texto: "CMAS: evidências e relatórios com trilha de auditoria." },
+    ],
+    []
+  );
+
+  const guiaVisivel = useMemo(() => {
+    const f = guiaFiltro.trim();
+    if (!f) return guiaTopicos;
+    const fl = f.toLowerCase();
+    return guiaTopicos.filter((t) => (t.titulo + " " + t.texto + " " + (t.tags || []).join(" ")).toLowerCase().includes(fl));
+  }, [guiaFiltro, guiaTopicos]);
+
+  function irParaAtualizacoes() {
+    const q = busca.trim();
+    const url = q ? `/atualizacoes?q=${encodeURIComponent(q)}` : "/atualizacoes";
+    window.location.assign(url);
+  }
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brand">
+            <div className="portal3-brand-tag">PORTAL SUAS · Inteligencia Social</div>
+            <div className="portal3-brand-title">
+              Sistema <span className="portal3-brand-highlight">SUAS</span>
+            </div>
+            <div className="portal3-brand-sub">Atualizações • legislação • protocolos • Guia SUAS • governança de dados</div>
+          </div>
+
+          <div className="portal3-actions">
+            <input
+              className="portal3-search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && irParaAtualizacoes()}
+              placeholder="Buscar no portal (MDS, CNAS, FNAS, Tipificação, NOB SUAS, CadÚnico, RMA...)"
+            />
+            <button type="button" className="portal3-btn-secondary" onClick={irParaAtualizacoes}>
+              Atualizações oficiais
+            </button>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Acessar o painel
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="portal3-hero">
+        <div className="portal3-hero-inner">
+          <div>
+            <div className="portal3-kicker">SUAS • CRAS • CREAS • Pop Rua • Acolhimentos • Gestão • Vigilância • Terceiro Setor • Conselho • Guia SUAS</div>
+
+            <h1 className="portal3-title">
+              Organização do atendimento + <span className="portal3-highlight">governança de dados</span> para servir melhor o cidadão e proteger o poder público.
+            </h1>
+
+            <p className="portal3-lead">
+              Um portal público com referências oficiais e um sistema completo para <b>padronizar registros</b>, <b>fortalecer o trabalho em rede</b> e garantir <b>acesso por perfil (LGPD)</b> — do atendimento na ponta até a gestão, prestação de contas e controle social.
+            </p>
+
+            <div className="portal3-cta-row">
+              <button type="button" className="portal3-btn-primary portal3-btn-big" onClick={() => onEntrar?.()}>
+                Entrar no sistema
+              </button>
+              <a className="portal3-link" href="#modulos">Conhecer os módulos ↓</a>
+              <a className="portal3-link" href="#guia">Guia SUAS (no portal) ↓</a>
+              <a className="portal3-link" href="/atualizacoes">Atualizações oficiais →</a>
+            </div>
+
+            <div className="portal3-chips">
+              <span className="portal3-chip">Perfis e permissões (LGPD)</span>
+              <span className="portal3-chip">Rastreabilidade (auditoria)</span>
+              <span className="portal3-chip">Fluxo por etapas</span>
+              <span className="portal3-chip">Vigilância territorial</span>
+              <span className="portal3-chip">Rede intermunicipal (consórcio)</span>
+              <span className="portal3-chip">Terceiro setor e parcerias</span>
+              <span className="portal3-chip">Conselho e controle social</span>
+              <span className="portal3-chip">Guia SUAS</span>
+            </div>
+          </div>
+
+          <div className="portal3-feature">
+            <div className="portal3-feature-title">O que isso resolve no SUAS?</div>
+            <ul className="portal3-bullets">
+              <li>Padroniza CRAS, CREAS, Pop Rua e Acolhimentos (evita “cada um faz do seu jeito”).</li>
+              <li>Reduz retrabalho e evita perda de informação com histórico contínuo.</li>
+              <li>Organiza encaminhamentos, devolutivas e responsabilidades por etapa.</li>
+              <li>Gera indicadores e evidências para planejamento, auditoria e prestação de contas.</li>
+              <li>LGPD aplicada (mínimo necessário) + trilha de auditoria.</li>
+            </ul>
+            <button type="button" className="portal3-btn-secondary" onClick={() => onEntrar?.()}>
+              Ver o painel (login)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="portal3-main">
+        <section className="portal3-section" id="modulos">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Módulos do Sistema SUAS</h2>
+            <p className="portal3-sub">Clique em um módulo para ver uma página completa do serviço (o que resolve, como ajuda e indicadores).</p>
+          </div>
+
+          <div className="portal3-cards-4">
+            {modulos.map((m) => (
+              <Link key={m.id} to={`/modulos/${m.id}`} className="portal3-card portal3-cardLink">
+                <div className="portal3-card-icon">{m.icone}</div>
+                <div className="portal3-card-title">{m.titulo}</div>
+                <div className="portal3-card-text">{m.texto}</div>
+                <div className="portal3-cardCta">Ver detalhes →</div>
+              </Link>
+            ))}
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">
+              Para legislação e atos recentes, use a página de Atualizações Oficiais (filtros Federal/SP + busca).
+            </div>
+            <button type="button" className="portal3-btn-primary" onClick={irParaAtualizacoes}>
+              Abrir Atualizações
+            </button>
+          </div>
+        </section>
+
+        <section className="portal3-section" id="guia">
+          <div className="portal3-section-head portal3-section-head-row">
+            <div>
+              <h2 className="portal3-h2">Guia SUAS (dentro do portal)</h2>
+              <p className="portal3-sub">Normas, rotinas e modelos prontos em linguagem simples.</p>
+            </div>
+            <div className="portal3-filter">
+              <button type="button" className="portal3-pill" onClick={() => setGuiaFiltro("")}>Todos</button>
+              <button type="button" className="portal3-pill" onClick={() => setGuiaFiltro("Tipificação")}>Tipificação</button>
+              <button type="button" className="portal3-pill" onClick={() => setGuiaFiltro("RMA")}>RMA</button>
+              <button type="button" className="portal3-pill" onClick={() => setGuiaFiltro("LGPD")}>LGPD</button>
+            </div>
+          </div>
+
+          <div className="portal3-chips">
+            {chips.map((c) => (
+              <button key={c} type="button" className="portal3-chip portal3-chip-btn" onClick={() => setGuiaFiltro(c)}>
+                {c}
+              </button>
+            ))}
+          </div>
+
+          <div className="portal3-cards-4" style={{ marginTop: 12 }}>
+            {guiaVisivel.map((g, idx) => (
+              <div key={idx} className="portal3-card">
+                <div className="portal3-card-icon">{g.icone}</div>
+                <div className="portal3-card-title">{g.titulo}</div>
+                <div className="portal3-card-text">{g.texto}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">Quer ver normas/atos recentes? Abra Atualizações Oficiais.</div>
+            <button type="button" className="portal3-btn-primary" onClick={irParaAtualizacoes}>Ir para Atualizações</button>
+          </div>
+        </section>
+
+        <footer className="portal3-footer">
+          <div className="portal3-footer-inner">
+            <span><strong>Portal SUAS</strong> • Inteligencia Social</span>
+            <span className="portal3-footer-muted">Home limpa + Atualizações em /atualizacoes</span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}

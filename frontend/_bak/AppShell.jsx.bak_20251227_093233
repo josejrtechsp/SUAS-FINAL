@@ -1,0 +1,23 @@
+import React from "react";
+import { useLocation } from "react-router-dom";
+
+import PopRuaApp from "./App.jsx";
+import CrasApp from "./CrasApp.jsx";
+
+export default function AppShell({ usuarioLogado, onLogout }) {
+  const location = useLocation();
+
+  const mod = React.useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return (params.get("mod") || localStorage.getItem("active_module") || "poprua").toLowerCase();
+  }, [location.search]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem("active_module", mod); } catch (e) {}
+  }, [mod]);
+
+  if (mod === "cras") {
+    return <CrasApp usuarioLogado={usuarioLogado} onLogout={onLogout} />;
+  }
+  return <PopRuaApp usuarioLogado={usuarioLogado} onLogout={onLogout} />;
+}

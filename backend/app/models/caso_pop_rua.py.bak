@@ -1,0 +1,81 @@
+from datetime import datetime
+from typing import Optional
+
+from sqlmodel import SQLModel, Field
+
+
+class CasoPopRuaBase(SQLModel):
+    # ✅ FK correto para a tabela PessoaRua
+    pessoa_id: int = Field(foreign_key="pessoarua.id")
+
+    # ✅ município do caso (base para restrição por perfil)
+    municipio_id: int = Field(foreign_key="municipio.id")
+
+    # Textos gerais (LGPD: redigidos no router para não-admin)
+    observacoes_iniciais: Optional[str] = None
+    observacoes_gerais: Optional[str] = None
+
+    # Status geral do caso
+    status: str = Field(default="em_andamento")  # em_andamento | encerrado
+
+    # Etapa atual na linha de metrô
+    etapa_atual: str = Field(default="ABORDAGEM")
+
+    # Ativo / inativo
+    ativo: bool = Field(default=True)
+
+    # Datas
+    data_abertura: datetime = Field(default_factory=datetime.utcnow)
+    data_ultima_atualizacao: datetime = Field(default_factory=datetime.utcnow)
+    data_encerramento: Optional[datetime] = None
+    motivo_encerramento: Optional[str] = None
+
+    # Controle de acompanhamento / estagnação
+    data_prevista_proxima_acao: Optional[datetime] = None
+    data_ultima_acao: Optional[datetime] = None
+
+    flag_estagnado: bool = Field(default=False)
+    dias_estagnado: int = Field(default=0)
+
+    tipo_estagnacao: Optional[str] = None
+    motivo_estagnacao: Optional[str] = None
+
+
+class CasoPopRua(CasoPopRuaBase, table=True):
+    __tablename__ = "casopoprua"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class CasoPopRuaUpdate(SQLModel):
+    observacoes_iniciais: Optional[str] = None
+    observacoes_gerais: Optional[str] = None
+
+    status: Optional[str] = None
+    etapa_atual: Optional[str] = None
+    ativo: Optional[bool] = None
+
+    data_prevista_proxima_acao: Optional[datetime] = None
+    data_ultima_acao: Optional[datetime] = None
+    data_encerramento: Optional[datetime] = None
+    motivo_encerramento: Optional[str] = None
+
+    flag_estagnado: Optional[bool] = None
+    dias_estagnado: Optional[int] = None
+    tipo_estagnacao: Optional[str] = None
+    motivo_estagnacao: Optional[str] = None
+
+
+class CasoPopRuaEtapaHistorico(SQLModel, table=True):
+    __tablename__ = "casopopruaetapahistorico"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    caso_id: int = Field(foreign_key="casopoprua.id")
+    etapa: str
+    data_acao: datetime = Field(default_factory=datetime.utcnow)
+
+    usuario_responsavel: str
+    observacoes: Optional[str] = None
+
+    tipo_acao: str = Field(default="avanco_etapa")
+    motivo_estagnacao: Optional[str] = None

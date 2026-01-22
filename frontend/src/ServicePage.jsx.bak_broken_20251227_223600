@@ -1,0 +1,214 @@
+import React from "react";
+import { Link, useParams } from "react-router-dom";
+
+import { IDEAL_SERVICES } from "./content/idealServices.js";
+import "./Portal.css";
+
+function scrollTop() {
+  try {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+}
+
+function goAtualizacoes(q) {
+  const query = (q || "").trim();
+  const url = query ? `/atualizacoes?q=${encodeURIComponent(query)}` : "/atualizacoes";
+  window.location.assign(url);
+}
+
+export default function ServicePage({ onEntrar }) {
+  const { slug } = useParams();
+  const [busca, setBusca] = React.useState("");
+
+  const service = React.useMemo(() => IDEAL_SERVICES.find((s) => s.slug === slug), [slug]);
+
+  React.useEffect(() => {
+    scrollTop();
+  }, [slug]);
+
+  if (!service) {
+    return (
+      <div className="portal3-root">
+        <header className="portal3-topbar">
+          <div className="portal3-topbar-inner">
+            <div className="portal3-brandRow">
+              <img className="portal3-logo" src="/ideal-logo.png" alt="IDEAL" />
+              <div className="portal3-brandWrap">
+  <img className="portal3-logo" src="/ideal-logo.png" alt="IDEAL" />
+  <div className="portal3-brand">
+    <div className="portal3-brand-tag">IDEAL · INTELIGÊNCIA PÚBLICA E DE MERCADO</div>
+    <div className="portal3-brand-title">Plataforma Municipal <span className="portal3-brand-highlight">Integrada</span></div>
+    <div className="portal3-brand-sub">GovTech • Pesquisa • Diagnóstico • Monitoramento • Execução</div>
+  </div>
+</div>
+
+<div className="portal3-actions">
+              <button type="button" className="portal3-btn-secondary" onClick={() => (window.location.href = "/")}>Voltar</button>
+              <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>Acessar o painel</button>
+            </div>
+          </div>
+        </header>
+
+        <main className="portal3-main">
+          <section className="portal3-section">
+            <h2 className="portal3-h2">Serviço não encontrado</h2>
+            <p className="portal3-sub">Volte para a página principal e escolha um serviço.</p>
+            <div className="portal3-cta-row" style={{ marginTop: 12 }}>
+              <Link className="portal3-btn-primary" to="/">Ir para o início</Link>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  const s = service.sections;
+  const related = IDEAL_SERVICES.filter((x) => x.slug !== service.slug).slice(0, 8);
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brandRow">
+            <img className="portal3-logo" src="/ideal-logo.png" alt="IDEAL" />
+            <div className="portal3-brand">
+              <div className="portal3-brand-tag">IDEAL · INTELIGÊNCIA PÚBLICA E DE MERCADO</div>
+              <div className="portal3-brand-title">
+                Serviços <span className="portal3-brand-highlight">IDEAL</span>
+              </div>
+              <div className="portal3-brand-sub">Descrição completa, entregas e indicadores.</div>
+            </div>
+          </div>
+
+          <div className="portal3-actions">
+            <input
+              className="portal3-search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && goAtualizacoes(busca)}
+              placeholder="Buscar no portal (normas, tipificação, NOB, RMA...)"
+            />
+            <button type="button" className="portal3-btn-secondary" onClick={() => goAtualizacoes(busca)}>
+              Atualizações
+            </button>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Acessar o painel
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="portal3-hero svc3-hero">
+        <div className="portal3-hero-inner svc3-hero-inner">
+          <div>
+            <div className="portal3-kicker">
+              <span className="portal3-chip svc3-chip">{service.badge}</span>
+              <span className="portal3-chip svc3-chipIcon" aria-hidden="true">{service.icon}</span>
+            </div>
+            <h1 className="portal3-title" style={{ marginTop: 10 }}>{service.title}</h1>
+            <p className="portal3-lead">{service.subtitle}</p>
+            <p className="portal3-lead" style={{ marginTop: 8 }}>{service.excerpt}</p>
+
+            <div className="portal3-cta-row" style={{ marginTop: 14 }}>
+              <button type="button" className="portal3-btn-primary portal3-btn-big" onClick={() => onEntrar?.()}>
+                Entrar no sistema
+              </button>
+              <Link to="/" className="portal3-btn-secondary">Voltar</Link>
+            </div>
+          </div>
+
+          <div className="portal3-feature">
+            <div className="portal3-feature-title">O que resolve</div>
+            <ul className="portal3-bullets">
+              {(s.oQueResolve || []).slice(0, 5).map((it) => (
+                <li key={it}>{it}</li>
+              ))}
+            </ul>
+            <button type="button" className="portal3-btn-secondary" onClick={() => onEntrar?.()}>
+              Ver na prática (login)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="portal3-main">
+        <section className="portal3-section">
+          <div className="portal3-cards-2">
+            <div className="portal3-card portal3-card-soft">
+              <div className="portal3-card-title">O que é</div>
+              <div className="portal3-card-text">{s.oQueE}</div>
+            </div>
+            <div className="portal3-card portal3-card-soft">
+              <div className="portal3-card-title">Para quem é</div>
+              <div className="portal3-card-text">{s.paraQuemE}</div>
+            </div>
+          </div>
+
+          <div className="portal3-cards-2">
+            <div className="portal3-card">
+              <div className="portal3-card-title">Entregas</div>
+              <ul className="portal3-bullets" style={{ marginTop: 10 }}>
+                {(s.entregas || []).map((it) => (
+                  <li key={it}>{it}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="portal3-card">
+              <div className="portal3-card-title">Indicadores sugeridos</div>
+              <ul className="portal3-bullets" style={{ marginTop: 10 }}>
+                {(s.indicadores || []).map((it) => (
+                  <li key={it}>{it}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="portal3-card" style={{ marginTop: 12 }}>
+            <div className="portal3-card-title">Como funciona</div>
+            <div className="portal3-card-text">{s.comoFunciona}</div>
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">
+              Quer ver esse serviço funcionando na prática? Entre no sistema e explore o fluxo e a rastreabilidade.
+            </div>
+            <button type="button" className="portal3-btn-primary" onClick={() => onEntrar?.()}>
+              Escolher módulo e entrar
+            </button>
+          </div>
+        </section>
+
+        <section className="portal3-section">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Outros serviços</h2>
+            <p className="portal3-sub">Navegue pelo portfólio completo da IDEAL.</p>
+          </div>
+
+          <div className="portal3-cards-4">
+            {related.map((x) => (
+              <Link key={x.slug} to={`/servicos/${x.slug}`} className="portal3-card portal3-cardLink">
+                <div className="portal3-card-icon" aria-hidden="true">{x.icon}</div>
+                <div className="portal3-card-title">{x.title}</div>
+                <div className="portal3-card-text">{x.excerpt}</div>
+                <div className="portal3-cardCta">Ver detalhes →</div>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <footer className="portal3-footer">
+          <div className="portal3-footer-inner">
+            <span>
+              <strong>IDEAL</strong> • Inteligência Pública e de Mercado
+            </span>
+            <span className="portal3-footer-muted">
+              <Link to="/" className="portal3-link">Voltar para o início</Link>
+            </span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,1757 @@
+import React, { useEffect, useMemo, useState } from "react";
+import LinhaMetro from "./components/LinhaMetro.jsx";
+import FichaUnica from "./components/FichaUnica.jsx";
+import {
+  canAprovarEncerramento,
+  canSolicitarEncerramento,
+  isGestor,
+  isLeitura,
+  isRecepcao,
+  isTecnico,
+  scopeCases,
+} from "./domain/acl.js";
+import {
+  CREAS_ETAPAS,
+  addAtendimento,
+  addEncaminhamento,
+  addTimeline,
+  assumirCreasCase,
+  aprovarEncerramentoCreasCase,
+  closeCreasCase,
+  getCreasCases,
+  getCreasEncerramentoChecklistStatusForCase,
+  recusarEncerramentoCreasCase,
+  registrarAvancoMetro,
+  seedCreasIfEmpty,
+  solicitarEncerramentoCreasCase,
+  updateCreasCase,
+  saveCreasCaseQualityChecklist,
+  getCreasSelectedCaseId,
+  setCreasSelectedCaseId
+} from "./domain/creasStore.js";
+
+import { createSuasEncaminhamento, getSuasUpdatesForCase } from "./domain/suasEncaminhamentosStore.js";
+
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function daysSince(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+}
+
+export default function TelaCreasCasos({ usuarioLogado, onNavigate }) {
+  const [cases, setCases] = useState(() => seedCreasIfEmpty());
+  const [q, setQ] = useState("");
+  const [fStatus, setFStatus] = useState("ativo");
+  const [selId, setSelId] = useState(() => getCreasSelectedCaseId() || "");
+  const [msg, setMsg] = useState("");
+  function flash(m) {
+    setMsg(m || "");
+    if (!m) return;
+    setTimeout(() => setMsg(""), 2600);
+  }
+  const [innerTab, setInnerTab] = useState("linha"); // linha | atendimentos | plano | encaminhamentos | documentos | resumo | ficha
+
+  // UI
+  const [showMais, setShowMais] = useState(false);
+
+  // formulário: atendimento
+  const [showAt, setShowAt] = useState(false);
+  const [atTipo, setAtTipo] = useState("atendimento");
+  const [atResumo, setAtResumo] = useState("");
+
+  // pós-atendimento (idiot-proof)
+  const [posAcao, setPosAcao] = useState("agenda"); // agenda | rede | tentativa
+  const [posQuando, setPosQuando] = useState(""); // datetime-local
+
+  // formulário: encaminhamento
+  const [showEnc, setShowEnc] = useState(false);
+  const [encCloseOpen, setEncCloseOpen] = useState(false);
+  const [encCloseMode, setEncCloseMode] = useState("solicitar"); // solicitar | direto | recusar
+  const [encCloseMotivo, setEncCloseMotivo] = useState("");
+  const [encCloseResumo, setEncCloseResumo] = useState("");
+  const [encQualJust, setEncQualJust] = useState("");
+  const [qualMap, setQualMap] = useState({});
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseMotivo, setPauseMotivo] = useState("Aguardando contato");
+  const [encTipo, setEncTipo] = useState("rede"); // rede | suas
+  const [encDestinoSuas, setEncDestinoSuas] = useState("CRAS");
+  const [encDestino, setEncDestino] = useState("Saúde");
+  const [encMotivo, setEncMotivo] = useState("");
+  const [encPrazo, setEncPrazo] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 15);
+    return d.toISOString().slice(0, 10);
+  });
+
+  useEffect(() => {
+    const onStorage = () => setCases(getCreasCases());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const scopedCases = useMemo(() => scopeCases(cases, usuarioLogado), [cases, usuarioLogado]);
+
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return (scopedCases || []).filter((c) => {
+      if (fStatus && c.status !== fStatus) return false;
+      if (!term) return true;
+      return (
+        String(c.id).includes(term) ||
+        (c.nome || "").toLowerCase().includes(term) ||
+        (c.motivo_tema || "").toLowerCase().includes(term) ||
+        (c.motivo_detalhe || "").toLowerCase().includes(term)
+      );
+    });
+  }, [scopedCases, q, fStatus]);
+
+  const sel = useMemo(() => {
+    const id = Number(selId || 0);
+    return (scopedCases || []).find((c) => Number(c.id) === id) || null;
+  }, [scopedCases, selId]);
+
+  const isG = useMemo(() => isGestor(usuarioLogado), [usuarioLogado]);
+  const isT = useMemo(() => isTecnico(usuarioLogado), [usuarioLogado]);
+  const isR = useMemo(() => isRecepcao(usuarioLogado), [usuarioLogado]);
+  const isL = useMemo(() => isLeitura(usuarioLogado), [usuarioLogado]);
+
+  const canOperarCaso = isG || isT;
+  const canAprovar = useMemo(() => canAprovarEncerramento(usuarioLogado), [usuarioLogado]);
+  const canSolicitar = useMemo(() => canSolicitarEncerramento(usuarioLogado), [usuarioLogado]);
+
+  const encStatus = useMemo(() => {
+    if (!sel) return "";
+    return String(sel?.encerramento_status || "").toLowerCase();
+  }, [sel]);
+  const qualStatus = useMemo(() => {
+    if (!sel) return null;
+    try {
+      return getCreasEncerramentoChecklistStatusForCase(sel);
+    } catch {
+      return null;
+    }
+  }, [sel]);
+
+  useEffect(() => {
+    if (!sel) return;
+    const st = getCreasEncerramentoChecklistStatusForCase(sel);
+    const base = (sel && sel.qualidade_checklist && typeof sel.qualidade_checklist === "object") ? sel.qualidade_checklist : {};
+    const next = {};
+    (st.items || []).forEach((it) => {
+      next[it] = Boolean(base[it]);
+    });
+    setQualMap(next);
+    setEncQualJust("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
+  const resumoExecutivo = useMemo(() => {
+    if (!sel) return "";
+    const status = String(sel.status || "—");
+    const risco = String(sel.risco || "—");
+    const etapa = String(sel.etapa_atual || "—");
+    const resp = sel.responsavel_nome ? String(sel.responsavel_nome) : "—";
+    const origem = sel.origem ? String(sel.origem) : "—";
+    const criado = sel.criado_em ? fmtDateTime(sel.criado_em) : "—";
+    const ultimo = sel.ultimo_registro_em ? fmtDateTime(sel.ultimo_registro_em) : (sel.atualizado_em ? fmtDateTime(sel.atualizado_em) : "—");
+    const prox = sel.proximo_passo ? String(sel.proximo_passo) : "—";
+    const proxEm = sel.proximo_passo_em ? fmtDateTime(sel.proximo_passo_em) : "—";
+
+    const enc = String(sel.encerramento_status || "");
+    const encTxt =
+      enc === "solicitado"
+        ? "Encerramento solicitado (aguardando aprovação)"
+        : enc === "recusado"
+        ? "Encerramento recusado"
+        : enc === "aprovado"
+        ? "Encerrado"
+        : "";
+
+    const pend = [];
+    if (sel.status === "ativo" && sel.proximo_passo_em) {
+      try {
+        const venc = new Date(sel.proximo_passo_em).getTime() < Date.now();
+        if (venc) pend.push("Próximo passo vencido");
+      } catch {}
+    }
+
+    const redeAguard = Array.isArray(sel.encaminhamentos)
+      ? sel.encaminhamentos.filter((e) => String(e?.status || "") === "aguardando").length
+      : 0;
+
+    const linhas = [
+      `CASO: ${sel.nome || "—"}`,
+      `Status: ${status}`,
+      `Risco: ${risco}`,
+      `Etapa: ${etapa}`,
+      `Responsável: ${resp}`,
+      `Origem: ${origem}`,
+      `Criado em: ${criado}`,
+      `Último movimento: ${ultimo}`,
+      "",
+      `Próximo passo: ${prox}`,
+      `Prazo: ${proxEm}`,
+      redeAguard ? `Rede: ${redeAguard} encaminhamento(s) aguardando retorno` : null,
+      pend.length ? `Pendências: ${pend.join(", ")}` : null,
+      encTxt ? `Encerramento: ${encTxt}` : null,
+    ].filter(Boolean);
+
+    return linhas.join("\n");
+
+  const timelineUICalc = useMemo(() => {
+    const base = Array.isArray(sel?.timeline) ? [...sel.timeline] : [];
+    const extra = Array.isArray(suasUI?.timeline) ? suasUI.timeline : [];
+    const all = [...extra, ...base];
+    all.sort((a, b) => {
+      const ta = a?.criado_em ? new Date(a.criado_em).getTime() : 0;
+      const tb = b?.criado_em ? new Date(b.criado_em).getTime() : 0;
+      return tb - ta;
+    });
+    return all;
+  }, [sel?.timeline, suasUI]);
+  }, [sel]);
+
+  async function copyText(txt) {
+    const t = String(txt || "").trim();
+    if (!t) return flash("Nada para copiar.");
+    try {
+      await navigator.clipboard.writeText(t);
+      flash("Copiado ✅");
+    } catch {
+      flash("Não foi possível copiar.");
+    }
+  }
+
+  const encSolicitado = encStatus === "solicitado";
+  const encRecusado = encStatus === "recusado";
+
+  const innerTabsAllowed = useMemo(() => {
+    const all = [
+      { k: "linha", l: "Linha do tempo" },
+      { k: "atendimentos", l: "Atendimentos" },
+      { k: "plano", l: "Plano do caso" },
+      { k: "encaminhamentos", l: "Encaminhamentos" },
+      { k: "ficha", l: "Usuário & família" },
+      { k: "documentos", l: "Documentos" },
+      { k: "resumo", l: "Resumo" },
+    ];
+
+    // Perfis de apoio (recepção/leitura) veem apenas a ficha única (autoexplicativo e sem sensíveis).
+    if (isR || isL) return all.filter((t) => t.k === "ficha");
+    return all;
+  }, [isR, isL]);
+
+  useEffect(() => {
+    if (!innerTabsAllowed?.length) return;
+    const ok = innerTabsAllowed.some((t) => t.k === innerTab);
+    if (!ok) setInnerTab(innerTabsAllowed[0].k);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [innerTabsAllowed, isR, isL]);
+
+  useEffect(() => {
+    if (!sel && filtered.length) {
+      setSelId(String(filtered[0].id));
+      try {
+        setCreasSelectedCaseId(String(filtered[0].id));
+      } catch {}
+    }
+    // eslint-disable-next-line
+  }, [filtered.length]);
+
+  const isSemMov = useMemo(() => {
+    if (!sel) return false;
+    const d = daysSince(sel.ultimo_registro_em || sel.criado_em) || 0;
+    const limite = sel.risco === "alto" ? 7 : 14;
+    return d >= limite;
+  }, [sel]);
+
+  const semResponsavel = useMemo(() => {
+    if (!sel) return false;
+    const rid = sel?.responsavel_id != null ? Number(sel.responsavel_id) : null;
+    return !rid;
+  }, [sel]);
+
+  const uiMode = useMemo(() => {
+    if (!sel) return "none";
+    if (semResponsavel) return "sem_responsavel";
+    if (isSemMov) return "sem_movimento";
+    return "normal";
+  }, [sel, semResponsavel, isSemMov]);
+
+  // ✅ Integração SUAS: devolutivas/cobranças aparecem dentro do caso (linha do tempo + linha do metrô)
+  const suasUI = useMemo(() => {
+    if (!sel) return { timeline: [], metroRegistros: [] };
+    return getSuasUpdatesForCase({ modulo: "CREAS", casoId: sel?.id, pessoaId: sel?.pessoa_id });
+  }, [sel?.id, sel?.pessoa_id]);
+
+
+  const linhaMetroUI = useMemo(() => {
+    if (!sel) return null;
+    const lm = sel?.linha_metro || { etapas: [] };
+    const baseEtapas = Array.isArray(lm?.etapas) ? lm.etapas : [];
+    const etapas = baseEtapas.map((et, idx) => {
+      const codigo = et?.codigo || String(idx);
+      const def = (CREAS_ETAPAS || []).find((x) => String(x?.codigo) === String(codigo));
+      return {
+        ...et,
+        codigo,
+        ordem: et?.ordem != null ? et.ordem : idx + 1,
+        nome: et?.nome || def?.nome || "Etapa",
+        descricao: et?.descricao || def?.descricao || "",
+      };
+    });
+    return { ...lm, etapas };
+  }, [sel]);
+
+  function setSelected(id) {
+    setSelId(String(id));
+    try {
+      setCreasSelectedCaseId(String(id));
+    } catch {}
+  }
+
+  function markStage(next) {
+    if (!sel) return;
+    updateCreasCase(sel.id, { etapa_atual: next });
+    addTimeline(sel.id, { tipo: "etapa", texto: `Etapa atual: ${next}`, por: usuarioLogado?.nome || "—" });
+    setCases(getCreasCases());
+  }
+
+  function assumirCaso() {
+    if (!sel) return;
+    if (!usuarioLogado?.id) return flash("Usuário inválido.");
+    if (!semResponsavel) return;
+
+    assumirCreasCase(sel.id, usuarioLogado);
+    setCases(getCreasCases());
+    flash("Você assumiu o caso ✅");
+  }
+
+  function _pad2(n) { return String(n).padStart(2, "0"); }
+  function _toDateStr(d) { return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}`; }
+  function _toDateTimeLocal(d) { return `${_toDateStr(d)}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`; }
+  function _suggestDaysByRisk(risco) {
+    const r = String(risco || "medio").toLowerCase();
+    if (r === "alto") return 2;
+    if (r === "medio") return 7;
+    return 15;
+  }
+  function sugerirDataHoraPorRisco(risco) {
+    const d = new Date();
+    d.setDate(d.getDate() + _suggestDaysByRisk(risco));
+    d.setHours(9, 0, 0, 0);
+    return _toDateTimeLocal(d);
+  }
+  function sugerirDataPorRisco(risco) {
+    const d = new Date();
+    d.setDate(d.getDate() + _suggestDaysByRisk(risco));
+    return _toDateStr(d);
+  }
+
+  function escolherPosAcao(k) {
+    setPosAcao(k);
+    if (k === "rede") {
+      setEncPrazo(sugerirDataPorRisco(sel?.risco));
+    } else {
+      setPosQuando(sugerirDataHoraPorRisco(sel?.risco));
+    }
+  }
+
+  function abrirModalAtendimento(acaoInicial = "agenda") {
+    if (!sel) return;
+    const acao = acaoInicial || "agenda";
+    setAtTipo(acao === "tentativa" ? "contato" : "atendimento");
+    setAtResumo("");
+    setPosAcao(acao);
+    if (acao === "rede") {
+      setEncPrazo(sugerirDataPorRisco(sel?.risco));
+    } else {
+      setPosQuando(sugerirDataHoraPorRisco(sel?.risco));
+    }
+    // prepara rede (caso o usuário escolha)
+    setEncTipo("rede");
+    setEncDestinoSuas("CRAS");
+    setEncDestino("Saúde");
+    setEncMotivo("");
+    setEncPrazo(sugerirDataPorRisco(sel?.risco));
+    setShowAt(true);
+  }
+
+  function abrirModalEncaminhamento() {
+    if (!sel) return;
+    setEncTipo("rede");
+    setEncDestinoSuas("CRAS");
+    setEncDestino("Saúde");
+    setEncMotivo("");
+    setEncPrazo(sugerirDataPorRisco(sel?.risco));
+    setShowEnc(true);
+  }
+
+
+  function salvarAtendimento() {
+    if (!sel) return;
+    if (!atResumo.trim()) return flash("Escreva um resumo curto do atendimento.");
+
+    const por = usuarioLogado?.nome || "—";
+
+    // Próximo passo (sempre obrigatório) — 3 opções
+    if (posAcao === "rede") {
+      if (!encMotivo.trim()) return flash("Faltou o motivo do encaminhamento.");
+      if (!encPrazo) return flash("Faltou o prazo de retorno.");
+    } else {
+      if (!posQuando) return flash("Faltou marcar a data do próximo passo.");
+    }
+
+    let proxTexto = "—";
+    let proxIso = null;
+
+    if (posAcao === "agenda") {
+      proxTexto = "Realizar próximo atendimento";
+      proxIso = new Date(posQuando).toISOString();
+    }
+    if (posAcao === "tentativa") {
+      proxTexto = "Nova tentativa de contato";
+      proxIso = new Date(posQuando).toISOString();
+    }
+    if (posAcao === "rede") {
+      const destinoLabel = encTipo === "suas" ? encDestinoSuas : encDestino;
+      proxTexto = encTipo === "suas"
+        ? `Aguardar recebimento/retorno: ${destinoLabel}`
+        : `Aguardar retorno: ${destinoLabel}`;
+      proxIso = new Date(encPrazo + "T09:00:00").toISOString();
+
+      // cria o encaminhamento e a pendência de retorno
+      if (encTipo === "suas") {
+        const prio = sel?.risco === "alto" ? "alta" : sel?.risco === "baixo" ? "baixa" : "media";
+        createSuasEncaminhamento(
+          {
+            pessoa_id: sel?.pessoa_id,
+            origem_modulo: "CREAS",
+            origem_caso_id: sel?.id,
+            origem_caso_label: `CREAS #${sel?.id}`,
+            destino_modulo: destinoLabel,
+            motivo: encMotivo.trim(),
+            prioridade: prio,
+            prazo_retorno: encPrazo,
+          },
+          usuarioLogado
+        );
+        
+// PATCH_CRAS_FRONT_STABILIZATION_V3: garante timelineUI sempre definido
+const timelineUI = Array.isArray(timelineUICalc) ? timelineUICalc : [];
+addTimeline(sel.id, {
+          tipo: "suas_enc",
+          texto: `Encaminhamento SUAS para ${destinoLabel} (retorno até ${encPrazo})`,
+          por,
+        });
+      } else {
+        addEncaminhamento(sel.id, {
+          destino: encDestino,
+          motivo: encMotivo.trim(),
+          prazo_retorno: encPrazo,
+          status: "aguardando",
+          por,
+        });
+        addTimeline(sel.id, {
+          tipo: "encaminhamento",
+          texto: `Encaminhado para ${encDestino} (retorno até ${encPrazo})`,
+          por,
+        });
+      }
+    }
+
+    const updated = addAtendimento(sel.id, {
+      tipo: atTipo,
+      resumo: atResumo.trim(),
+      proximo_passo: proxTexto,
+      proximo_passo_em: proxIso,
+      por,
+    });
+
+    addTimeline(sel.id, { tipo: "atendimento", texto: "Atendimento registrado ✅", por });
+    setCases(getCreasCases());
+    setShowAt(false);
+    setAtResumo("");
+    setPosQuando("");
+    flash("Atendimento registrado ✅ Próximo passo marcado.");
+
+    // Avanço de etapa (autoexplicativo)
+    if (posAcao === "rede") {
+      if (sel?.etapa_atual !== "rede") markStage("rede");
+    } else {
+      if (updated?.etapa_atual === "entrada") markStage("triagem");
+    }
+  }
+
+  function salvarEncaminhamento() {
+    if (!sel) return;
+    if (!encMotivo.trim()) return flash("Escreva o motivo do encaminhamento.");
+    if (!encPrazo) return flash("Informe o prazo de retorno.");
+
+    const por = usuarioLogado?.nome || "—";
+
+    const destinoLabel = encTipo === "suas" ? encDestinoSuas : encDestino;
+
+    if (encTipo === "suas") {
+      const prio = sel?.risco === "alto" ? "alta" : sel?.risco === "baixo" ? "baixa" : "media";
+      createSuasEncaminhamento(
+        {
+          pessoa_id: sel?.pessoa_id,
+          origem_modulo: "CREAS",
+          origem_caso_id: sel?.id,
+          origem_caso_label: `CREAS #${sel?.id}`,
+          destino_modulo: destinoLabel,
+          motivo: encMotivo.trim(),
+          prioridade: prio,
+          prazo_retorno: encPrazo,
+        },
+        usuarioLogado
+      );
+
+      updateCreasCase(sel.id, {
+        proximo_passo: `Aguardar recebimento/retorno: ${destinoLabel}`,
+        proximo_passo_em: new Date(encPrazo + "T09:00:00").toISOString(),
+      });
+
+      addTimeline(sel.id, {
+        tipo: "suas_enc",
+        texto: `Encaminhamento SUAS para ${destinoLabel} (retorno até ${encPrazo})`,
+        por,
+      });
+
+      setCases(getCreasCases());
+      setShowEnc(false);
+      setEncMotivo("");
+      flash("Encaminhamento SUAS registrado ✅ Pendência criada.");
+      if (sel.etapa_atual !== "rede") markStage("rede");
+      return;
+    }
+
+    addEncaminhamento(sel.id, {
+      destino: encDestino,
+      motivo: encMotivo.trim(),
+      prazo_retorno: encPrazo,
+      status: "aguardando",
+      por,
+    });
+
+    // Próximo passo automático: aguardar retorno
+    updateCreasCase(sel.id, {
+      proximo_passo: `Aguardar retorno: ${encDestino}`,
+      proximo_passo_em: new Date(encPrazo + "T09:00:00").toISOString(),
+    });
+
+    addTimeline(sel.id, {
+      tipo: "encaminhamento",
+      texto: `Encaminhado para ${encDestino} (retorno até ${encPrazo})`,
+      por,
+    });
+
+    setCases(getCreasCases());
+    setShowEnc(false);
+    setEncMotivo("");
+    flash("Encaminhamento registrado ✅ Pendência de retorno criada.");
+
+    if (sel.etapa_atual !== "rede") markStage("rede");
+  }
+
+  function solicitarEncerramento() {
+    if (!sel) return;
+    if (!canSolicitar) return flash("Seu perfil não pode solicitar encerramento.");
+
+    const stQual = getCreasEncerramentoChecklistStatusForCase(sel);
+    if (stQual?.items?.length && !stQual.complete) {
+      setInnerTab("resumo");
+      return flash("Complete o checklist de qualidade (aba Resumo) antes de solicitar encerramento.");
+    }
+
+    const defaultMotivo = sel?.encerramento_solicitado_motivo || "Concluído";
+    const defaultResumo = sel?.encerramento_solicitado_resumo || "Caso encerrado.";
+
+    setEncCloseMode("solicitar");
+    setEncCloseMotivo(defaultMotivo);
+    setEncCloseResumo(defaultResumo);
+    setEncCloseOpen(true);
+    setShowMais(false);
+  }
+
+  function encerrarCasoDiretoGestor() {
+    if (!sel) return;
+    if (!isG) return flash("Apenas a coordenação/gestor pode encerrar diretamente.");
+
+    setEncQualJust("");
+    setEncCloseMode("direto");
+    setEncCloseMotivo("Concluído");
+    setEncCloseResumo("Caso encerrado.");
+    setEncCloseOpen(true);
+    setShowMais(false);
+  }
+
+  function aprovarEncerramento() {
+    if (!sel) return;
+    if (!canAprovar) return flash("Seu perfil não pode aprovar encerramento.");
+
+    const defaultMotivo = sel?.encerramento_solicitado_motivo || "Concluído";
+    const defaultResumo = sel?.encerramento_solicitado_resumo || "Caso encerrado.";
+
+    setEncCloseMode("aprovar");
+    setEncCloseMotivo(defaultMotivo);
+    setEncCloseResumo(defaultResumo);
+    setEncQualJust("");
+    setEncCloseOpen(true);
+    setShowMais(false);
+  }
+
+  function recusarEncerramento() {
+    if (!sel) return;
+    if (!canAprovar) return flash("Seu perfil não pode recusar encerramento.");
+
+    setEncCloseMode("recusar");
+    setEncCloseMotivo("Falta informação/registro");
+    setEncCloseResumo("");
+    setEncCloseOpen(true);
+  }
+
+  return (
+    <div style={{ width: "100%" }}>
+      <div className="app-main-inner" style={{ padding: 0 }}>
+          {msg ? (
+            <div className="card" style={{ width: "100%", padding: 10, boxShadow: "none", border: "1px solid rgba(59,130,246,.25)", background: "rgba(59,130,246,.08)" }} role="alert">
+              <b>{msg}</b>
+            </div>
+          ) : null}
+        {/* COLUNA ESQUERDA */}
+        <div className="col-esquerda">
+          <div className="card">
+            <div style={{ fontWeight: 950, fontSize: 16 }}>Casos (CREAS)</div>
+            <div className="texto-suave">Buscar e abrir prontuário.</div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              <input
+                className="input"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Buscar por nome, motivo, id..."
+              />
+
+              <select className="input" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+                <option value="ativo">Ativos</option>
+                <option value="encerrado">Encerrados</option>
+              </select>
+
+              <button className="btn btn-primario" type="button" onClick={() => onNavigate?.({ tab: "novo" })}>
+                + Novo caso
+              </button>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 12 }}>
+            {filtered.length ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                {filtered.slice(0, 80).map((c) => {
+                  const active = String(c.id) === String(selId);
+                  const dias = daysSince(c.ultimo_registro_em || c.criado_em) || 0;
+                  const rid = c?.responsavel_id != null ? Number(c.responsavel_id) : null;
+                  const semResp = !rid;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={"btn" + (active ? " btn-primario" : "")}
+                      style={{ textAlign: "left", justifyContent: "space-between", display: "flex" }}
+                      onClick={() => setSelected(c.id)}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 950 }}>{c.nome}</div>
+                        <div className="texto-suave">
+                          Risco <b>{c.risco}</b> · {dias}d sem registro
+                          {semResp ? (
+                            <>
+                              {" "}· <b>Sem responsável</b>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 900, opacity: 0.7 }}>→</div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="texto-suave">Nenhum caso encontrado.</div>
+            )}
+          </div>
+        </div>
+
+        {/* COLUNA DIREITA */}
+        <div className="col-direita">
+          {!sel ? (
+            <div className="card">Selecione um caso.</div>
+          ) : (
+            <>
+              <div className="card">
+                <div className="card-header-row">
+                  <div>
+                    <div style={{ fontWeight: 950, fontSize: 18 }}>{sel.nome}</div>
+                    <div className="texto-suave">
+                      Status <b>{sel.status}</b> · Risco <b>{sel.risco}</b> · Etapa <b>{sel.etapa_atual}</b>
+                    </div>
+                    <div className="texto-suave">
+                      Responsável: <b>{sel.responsavel_nome || "Sem responsável"}</b>
+                    </div>
+                    <div className="texto-suave">
+                      Último registro: <b>{fmtDateTime(sel.ultimo_registro_em)}</b> · Próximo passo: <b>{sel.proximo_passo || "—"}</b> ({fmtDateTime(sel.proximo_passo_em)})
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {uiMode === "normal" && canOperarCaso ? (
+                      <button className="btn btn-secundario" type="button" onClick={() => setShowMais(true)}>
+                        Mais ações
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {semResponsavel && canOperarCaso ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(122,92,255,0.22)",
+                      background: "rgba(122,92,255,0.08)",
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 950 }}>Caso sem responsável</div>
+                      <div className="texto-suave">Clique em <b>ASSUMIR CASO</b> para ele entrar na sua fila.</div>
+                    </div>
+                    <button
+                      className="btn btn-primario"
+                      type="button"
+                      onClick={assumirCaso}
+                      style={{
+                        padding: "12px 16px",
+                        fontSize: 15,
+                        fontWeight: 950,
+                        borderRadius: 14,
+                      }}
+                    >
+                      ASSUMIR CASO
+                    </button>
+                  </div>
+                ) : null}
+
+                {isSemMov && !semResponsavel && canOperarCaso ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(239,68,68,.25)",
+                      background: "rgba(239,68,68,.08)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950 }}>⚠️ Caso sem movimento</div>
+                    <div className="texto-suave">
+                      Antes de continuar: registre um atendimento ou uma justificativa de pausa (entra na linha do tempo).
+                    </div>
+                    <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button className="btn btn-primario" type="button" onClick={() => abrirModalAtendimento("agenda")}>
+                        Registrar atendimento agora
+                      </button>
+                      <button
+                        className="btn btn-secundario"
+                        type="button"
+                        onClick={() => { setPauseMotivo("Aguardando contato"); setPauseOpen(true); }}
+                      >
+                        Registrar motivo da pausa
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Fluxo B (encerramento): técnico solicita e coordenação aprova */}
+                {encSolicitado && !semResponsavel && canOperarCaso ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(59,130,246,.25)",
+                      background: "rgba(59,130,246,.08)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950 }}>⏳ Encerramento solicitado</div>
+                    <div className="texto-suave" style={{ marginTop: 4 }}>
+                      Solicitado por <b>{sel?.encerramento_solicitado_por_nome || "—"}</b> em <b>{fmtDateTime(sel?.encerramento_solicitado_em)}</b>.
+                    </div>
+                    <div className="texto-suave" style={{ marginTop: 6 }}>
+                      Motivo: <b>{sel?.encerramento_solicitado_motivo || "—"}</b>
+                      <br />
+                      Resumo: <b>{sel?.encerramento_solicitado_resumo || "—"}</b>
+                    </div>
+
+                    {canAprovar ? (
+                      <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button className="btn btn-primario" type="button" onClick={aprovarEncerramento}>
+                          Aprovar e encerrar
+                        </button>
+                        <button className="btn btn-secundario" type="button" onClick={recusarEncerramento}>
+                          Recusar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="texto-suave" style={{ marginTop: 10, fontWeight: 900 }}>
+                        Aguardando aprovação da coordenação.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {encRecusado && !semResponsavel && canOperarCaso ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(239,68,68,.25)",
+                      background: "rgba(239,68,68,.08)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950 }}>❌ Encerramento recusado</div>
+                    <div className="texto-suave" style={{ marginTop: 6 }}>
+                      Recusado por <b>{sel?.encerramento_avaliado_por_nome || "—"}</b> em <b>{fmtDateTime(sel?.encerramento_avaliado_em)}</b>.
+                      <br />
+                      Motivo: <b>{sel?.encerramento_recusa_motivo || "—"}</b>
+                    </div>
+
+                    {canSolicitar ? (
+                      <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button className="btn btn-primario" type="button" onClick={solicitarEncerramento}>
+                          Solicitar encerramento novamente
+                        </button>
+                        <button
+                          className="btn btn-secundario"
+                          type="button"
+                          onClick={() => {
+                            setInnerTab("atendimentos");
+                          }}
+                        >
+                          Registrar novo atendimento
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* O QUE FAZER AGORA (idiot-proof) */}
+              {uiMode === "normal" && canOperarCaso && !encSolicitado ? (
+                <div className="card">
+                  <div style={{ fontWeight: 950, fontSize: 16 }}>O QUE FAZER AGORA?</div>
+                  <div className="texto-suave">
+                    Escolha <b>1 caminho</b>. O sistema registra o atendimento e já marca o <b>próximo passo</b>.
+                  </div>
+
+                  <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                    <button
+                      type="button"
+                      className="btn btn-primario"
+                      style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                      onClick={() => abrirModalAtendimento("agenda")}
+                    >
+                      <div style={{ fontWeight: 950 }}>1) Agendar próximo atendimento</div>
+                      <div className="texto-suave" style={{ marginTop: 2 }}>
+                        Abre o atendimento e já coloca a data na Agenda.
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-secundario"
+                      style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                      onClick={() => abrirModalAtendimento("rede")}
+                    >
+                      <div style={{ fontWeight: 950 }}>2) Encaminhar para rede</div>
+                      <div className="texto-suave" style={{ marginTop: 2 }}>
+                        Abre o atendimento e já cria o prazo de retorno da rede.
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-secundario"
+                      style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                      onClick={() => abrirModalAtendimento("tentativa")}
+                    >
+                      <div style={{ fontWeight: 950 }}>3) Tentativa / sem contato</div>
+                      <div className="texto-suave" style={{ marginTop: 2 }}>
+                        Registra que tentou contato e agenda nova tentativa.
+                      </div>
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <button className="btn btn-secundario" type="button" onClick={() => setShowMais(true)}>
+                      Mais ações (encerrar, documentos, ficha)
+                    </button>
+                  </div>
+                </div>
+              ) : uiMode === "normal" && !canOperarCaso ? (
+                <div className="card">
+                  <div style={{ fontWeight: 950, fontSize: 16 }}>Acesso limitado</div>
+                  <div className="texto-suave" style={{ marginTop: 6 }}>
+                    Seu perfil tem acesso apenas à <b>Ficha Única</b> (contato/endereço) e à <b>Agenda</b>.
+                  </div>
+                  <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button className="btn btn-primario" type="button" onClick={() => setInnerTab("ficha")}>
+                      Abrir Ficha Única
+                    </button>
+                    <button className="btn btn-secundario" type="button" onClick={() => onNavigate?.({ tab: "agenda" })}>
+                      Ir para Agenda
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ABAS INTERNAS */}
+              <div className="card">
+                <div className="app-tabs" style={{ padding: 0 }}>
+                  {(innerTabsAllowed || []).map((t) => (
+                    <button
+                      key={t.k}
+                      type="button"
+                      className={"app-tab" + (innerTab === t.k ? " app-tab-active" : "")}
+                      onClick={() => setInnerTab(t.k)}
+                    >
+                      {t.l}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  {innerTab === "linha" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(timelineUI || []).length ? (
+                        timelineUI.map((t) => (
+                          <div
+                            key={t.id}
+                            className="card"
+                            style={{
+                              padding: 12,
+                              boxShadow: "none",
+                              border: "1px solid rgba(2,6,23,.06)",
+                            }}
+                          >
+                            <div style={{ fontWeight: 900 }}>{t.texto}</div>
+                            <div className="texto-suave">
+                              {fmtDateTime(t.criado_em)} · {t.por}
+                              {fmtDateTime(t.criado_em)} · {t.por}
+                            {t.detalhe ? (
+                              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.35, background: "rgba(2,6,23,.03)", padding: 10, borderRadius: 12, border: "1px solid rgba(2,6,23,.06)" }}>
+                                {t.detalhe}
+                              </pre>
+                            ) : null}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="texto-suave">Sem registros ainda.</div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {innerTab === "atendimentos" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(sel.atendimentos || []).length ? (
+                        sel.atendimentos.map((a) => (
+                          <div
+                            key={a.id}
+                            className="card"
+                            style={{
+                              padding: 12,
+                              boxShadow: "none",
+                              border: "1px solid rgba(2,6,23,.06)",
+                            }}
+                          >
+                            <div style={{ fontWeight: 900 }}>{a.tipo}</div>
+                            <div className="texto-suave">
+                              {fmtDateTime(a.data_hora)} · {a.por}
+                            </div>
+                            <div style={{ marginTop: 8 }}>{a.resumo}</div>
+                            <div className="texto-suave" style={{ marginTop: 8 }}>
+                              Próximo passo: <b>{a.proximo_passo}</b> ({fmtDateTime(a.proximo_passo_em)})
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="texto-suave">Nenhum atendimento registrado.</div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {innerTab === "encaminhamentos" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(sel.encaminhamentos || []).length ? (
+                        sel.encaminhamentos.map((e) => (
+                          <div
+                            key={e.id}
+                            className="card"
+                            style={{
+                              padding: 12,
+                              boxShadow: "none",
+                              border: "1px solid rgba(2,6,23,.06)",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <div style={{ fontWeight: 900 }}>{e.destino}</div>
+                              <div className="texto-suave" style={{ fontWeight: 900 }}>
+                                {e.status === "aguardando" ? "Aguardando retorno" : "Concluído"}
+                              </div>
+                            </div>
+                            <div className="texto-suave">
+                              Prazo: <b>{e.prazo_retorno || "—"}</b> · {e.por}
+                            </div>
+                            <div style={{ marginTop: 8 }}>{e.motivo}</div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="card" style={{ padding: 12, border: "1px dashed rgba(2,6,23,.14)", background: "rgba(255,255,255,.75)" }}><div style={{ fontWeight: 900, marginBottom: 6 }}>Nenhum encaminhamento ainda</div><div className="texto-suave" style={{ marginBottom: 10 }}>Crie um encaminhamento para a rede (ou outro equipamento SUAS) e defina prazo de retorno. Isso entra na fila inteligente automaticamente.</div><button className="btn btn-primario" type="button" onClick={abrirModalEncaminhamento}>+ Criar encaminhamento</button></div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {innerTab === "ficha" ? (
+                    <FichaUnica
+                      pessoaId={sel?.pessoa_id}
+                      casos={scopedCases}
+                      usuarioLogado={usuarioLogado}
+                      origemModulo="CREAS"
+                      origemCasoId={sel?.id}
+                      origemCasoLabel={sel?.nome}
+                      onCreatedSuasEncaminhamento={(item) => {
+                        if (!sel || !item) return;
+                        const prazoIso = item?.prazo_retorno
+                          ? new Date(item.prazo_retorno + "T09:00:00").toISOString()
+                          : new Date().toISOString();
+
+                        // Próximo passo vira controle de prazo
+                        updateCreasCase(sel.id, {
+                          proximo_passo: `Aguardar retorno: ${String(item.destino_modulo || "").toUpperCase()}`,
+                          proximo_passo_em: prazoIso,
+                        });
+
+                        // Linha do metrô (etapa REDE) — registro automático
+                        registrarAvancoMetro(
+                          sel.id,
+                          {
+                            etapa: "rede",
+                            obs: `Encaminhamento SUAS → ${String(item.destino_modulo || "").toUpperCase()} · #${item.id}${item?.prazo_retorno ? ` (prazo ${item.prazo_retorno})` : ""}`,
+                          },
+                          usuarioLogado
+                        );
+
+                        // Linha do tempo (auditável)
+                        addTimeline(sel.id, {
+                          tipo: "suas",
+                          texto: `Encaminhamento SUAS enviado para ${String(item.destino_modulo || "").toUpperCase()} · #${item.id}`,
+                          por: usuarioLogado?.nome || "—",
+                        });
+
+                        setCases(getCreasCases());
+                      }}
+                      onOpenCaso={(caseId) => {
+                        if (caseId != null) setSelected(caseId);
+                      }}
+                    />
+                  ) : null}
+{innerTab === "plano" ? <div className="texto-suave">Plano do caso (MVP em breve).</div> : null}
+                  {innerTab === "documentos" ? <div className="texto-suave">Documentos (MVP em breve).</div> : null}
+                                    {innerTab === "resumo" ? (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ fontWeight: 950 }}>Resumo executivo</div>
+                          <button className="btn btn-secundario" type="button" onClick={() => copyText(resumoExecutivo)}>
+                            Copiar
+                          </button>
+                        </div>
+                        <pre style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>{resumoExecutivo || "—"}</pre>
+                      </div>
+
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ fontWeight: 950 }}>Qualidade do caso (checklist do encerramento)</div>
+                          <button
+                            className="btn btn-primario"
+                            type="button"
+                            onClick={() => {
+                              if (!sel) return;
+                              saveCreasCaseQualityChecklist(sel.id, qualMap, usuarioLogado);
+                              setCases(getCreasCases());
+                              flash("Checklist salvo ✅");
+                            }}
+                          >
+                            Salvar checklist
+                          </button>
+                        </div>
+
+                        {(qualStatus?.items || []).length ? (
+                          <>
+                            <div className="texto-suave" style={{ marginTop: 6 }}>
+                              {(qualStatus.items || []).filter((it) => Boolean(qualMap && qualMap[it])).length}/{(qualStatus.items || []).length} itens concluídos.
+                            </div>
+
+                            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                              {(qualStatus.items || []).map((it) => (
+                                <label key={it} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(qualMap && qualMap[it])}
+                                    onChange={(e) => setQualMap((p) => ({ ...(p || {}), [it]: e.target.checked }))}
+                                    style={{ marginTop: 2 }}
+                                  />
+                                  <span>{it}</span>
+                                </label>
+                              ))}
+                            </div>
+
+                            {sel?.qualidade_checklist_salvo_em ? (
+                              <div className="texto-suave" style={{ marginTop: 10 }}>
+                                Último salvamento: {fmtDateTime(sel.qualidade_checklist_salvo_em)} · {sel.qualidade_checklist_salvo_por_nome || "—"}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="texto-suave" style={{ marginTop: 8 }}>
+                            Nenhum checklist configurado. Vá em <b>Config</b> → Workflow e defina <code>checklist</code> na etapa <code>encerramento</code>.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {innerTab !== "ficha" ? (
+                <>
+{/* LINHA DO METRÔ (padrão CRAS/PopRua: etapas clicáveis + registro por etapa) */}
+              <div className="card">
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>Linha de metrô</div>
+                {linhaMetroUI ? (
+                  <LinhaMetro
+                    linhaMetro={linhaMetroUI}
+                    casoId={sel?.id}
+                    currentKey={sel?.etapa_atual}
+                    atendimentos={sel?.atendimentos || []}
+                    encaminhamentos={sel?.encaminhamentos || []}
+                    onRegisterLocal={async (body) => {
+                      if (!sel) return;
+                      registrarAvancoMetro(sel.id, body, usuarioLogado);
+                      const etapaCod = body?.etapa;
+                      const def = (CREAS_ETAPAS || []).find((x) => String(x?.codigo) === String(etapaCod));
+                      addTimeline(sel.id, {
+                        tipo: "metro",
+                        texto: `Linha do metrô: ${def?.nome || etapaCod} — registro`,
+                        por: usuarioLogado?.nome || "—",
+                      });
+                    }}
+                    onRefresh={() => setCases(getCreasCases())}
+                  />
+                ) : (
+                  <div className="texto-suave">Carregando linha do metrô…</div>
+                )}
+              </div>
+
+                              </>
+              ) : null}
+
+              {/* MODAL/FORM: ATENDIMENTO */}
+              {showAt ? (
+                <div className="modal-overlay" role="dialog" aria-modal="true">
+                  <div className="modal-card">
+                    <div className="card-header-row">
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>Registrar atendimento</div>
+                      <button className="btn btn-secundario" type="button" onClick={() => setShowAt(false)}>
+                        Fechar
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Tipo
+                        </div>
+                        <select className="input" value={atTipo} onChange={(e) => setAtTipo(e.target.value)}>
+                          <option value="acolhimento">Acolhimento</option>
+                          <option value="atendimento">Atendimento</option>
+                          <option value="visita">Visita</option>
+                          <option value="contato">Contato</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Resumo curto (obrigatório)
+                        </div>
+                        <textarea
+                          className="input"
+                          rows={4}
+                          value={atResumo}
+                          onChange={(e) => setAtResumo(e.target.value)}
+                          placeholder="Ex.: Relatou... / Foi orientado... / Combinado..."
+                        />
+                      </div>
+
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Próximo passo — escolha 1 (obrigatório)
+                        </div>
+                        <div className="texto-suave" style={{ marginBottom: 10 }}>
+                          O sistema sempre agenda o próximo passo para <b>não deixar o caso parado</b>.
+                        </div>
+
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <button
+                            type="button"
+                            className={"btn" + (posAcao === "agenda" ? " btn-primario" : "")}
+                            style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                            onClick={() => escolherPosAcao("agenda")}
+                          >
+                            <div style={{ fontWeight: 950 }}>1) Agendar próximo atendimento</div>
+                            <div className="texto-suave" style={{ marginTop: 2 }}>
+                              Define a data e coloca na Agenda. O caso continua andando.
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={"btn" + (posAcao === "rede" ? " btn-primario" : "")}
+                            style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                            onClick={() => escolherPosAcao("rede")}
+                          >
+                            <div style={{ fontWeight: 950 }}>2) Encaminhar para rede</div>
+                            <div className="texto-suave" style={{ marginTop: 2 }}>
+                              Envia para outro serviço e cria prazo de retorno.
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={"btn" + (posAcao === "tentativa" ? " btn-primario" : "")}
+                            style={{ textAlign: "left", padding: 12, borderRadius: 14 }}
+                            onClick={() => escolherPosAcao("tentativa")}
+                          >
+                            <div style={{ fontWeight: 950 }}>3) Registrar tentativa / sem contato</div>
+                            <div className="texto-suave" style={{ marginTop: 2 }}>
+                              Registra que tentou e programa nova tentativa.
+                            </div>
+                          </button>
+                        </div>
+
+                        {posAcao === "agenda" ? (
+                          <div style={{ marginTop: 12 }}>
+                            <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                              Data do próximo atendimento (sugestão automática)
+                            </div>
+                            <input
+                              className="input"
+                              type="datetime-local"
+                              value={posQuando}
+                              onChange={(e) => setPosQuando(e.target.value)}
+                            />
+                          </div>
+                        ) : null}
+
+                        {posAcao === "tentativa" ? (
+                          <div style={{ marginTop: 12 }}>
+                            <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                              Quando tentar novamente (sugestão automática)
+                            </div>
+                            <input
+                              className="input"
+                              type="datetime-local"
+                              value={posQuando}
+                              onChange={(e) => setPosQuando(e.target.value)}
+                            />
+                          </div>
+                        ) : null}
+
+                        {posAcao === "rede" ? (
+                          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <div style={{ flex: "0 0 240px" }}>
+                                <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                                  Tipo de destino
+                                </div>
+                                <select
+                                  className="input"
+                                  value={encTipo}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setEncTipo(v);
+                                    if (v === "suas") setEncDestinoSuas("CRAS");
+                                    if (v === "rede") setEncDestino("Saúde");
+                                  }}
+                                >
+                                  <option value="rede">Rede externa (Saúde/Educação/…)</option>
+                                  <option value="suas">Equipamento SUAS (CRAS/PopRua)</option>
+                                </select>
+                              </div>
+
+                              <div style={{ flex: "1 1 260px" }}>
+                                <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                                  Para onde
+                                </div>
+                                {encTipo === "suas" ? (
+                                  <select className="input" value={encDestinoSuas} onChange={(e) => setEncDestinoSuas(e.target.value)}>
+                                    <option value="CRAS">CRAS</option>
+                                    <option value="POPRUA">PopRua</option>
+                                  </select>
+                                ) : (
+                                  <select className="input" value={encDestino} onChange={(e) => setEncDestino(e.target.value)}>
+                                    <option>Saúde</option>
+                                    <option>Educação</option>
+                                    <option>Segurança</option>
+                                    <option>Judiciário</option>
+                                    <option>MP</option>
+                                    <option>Conselho Tutelar</option>
+                                    <option>Outro</option>
+                                  </select>
+                                )}
+                              </div>
+
+                              <div style={{ flex: "0 0 260px" }}>
+                                <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                                  Prazo de retorno (sugestão automática)
+                                </div>
+                                <input className="input" type="date" value={encPrazo} onChange={(e) => setEncPrazo(e.target.value)} />
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                                Motivo do encaminhamento (obrigatório)
+                              </div>
+                              <textarea
+                                className="input"
+                                rows={3}
+                                value={encMotivo}
+                                onChange={(e) => setEncMotivo(e.target.value)}
+                                placeholder="Ex.: Solicitar avaliação / vaga / relatório..."
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="card-footer-right">
+                      <button className="btn btn-primario" type="button" onClick={salvarAtendimento}>
+                        Salvar atendimento
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* MODAL/FORM: ENCAMINHAMENTO */}
+              {showEnc ? (
+                <div className="modal-overlay" role="dialog" aria-modal="true">
+                  <div className="modal-card">
+                    <div className="card-header-row">
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>Encaminhar (Rede / Equipamento SUAS)</div>
+                      <button className="btn btn-secundario" type="button" onClick={() => setShowEnc(false)}>
+                        Fechar
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Tipo de destino
+                        </div>
+                        <select
+                          className="input"
+                          value={encTipo}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setEncTipo(v);
+                            // pequenos defaults autoexplicativos
+                            if (v === "suas") setEncDestinoSuas("CRAS");
+                            if (v === "rede") setEncDestino("Saúde");
+                          }}
+                        >
+                          <option value="rede">Rede externa (Saúde/Educação/…)</option>
+                          <option value="suas">Equipamento SUAS (CRAS/PopRua)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Para onde
+                        </div>
+                        {encTipo === "suas" ? (
+                          <select className="input" value={encDestinoSuas} onChange={(e) => setEncDestinoSuas(e.target.value)}>
+                            <option value="CRAS">CRAS</option>
+                            <option value="POPRUA">PopRua</option>
+                          </select>
+                        ) : (
+                          <select className="input" value={encDestino} onChange={(e) => setEncDestino(e.target.value)}>
+                            <option>Saúde</option>
+                            <option>Educação</option>
+                            <option>Segurança</option>
+                            <option>Judiciário</option>
+                            <option>MP</option>
+                            <option>Conselho Tutelar</option>
+                            <option>Outro</option>
+                          </select>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Por quê (obrigatório)
+                        </div>
+                        <textarea
+                          className="input"
+                          rows={3}
+                          value={encMotivo}
+                          onChange={(e) => setEncMotivo(e.target.value)}
+                          placeholder="Ex.: Solicitar avaliação / vaga / relatório..."
+                        />
+                      </div>
+
+                      <div>
+                        <div className="texto-suave" style={{ fontWeight: 900, marginBottom: 6 }}>
+                          Prazo de retorno (sugestão automática)
+                        </div>
+                        <input className="input" type="date" value={encPrazo} onChange={(e) => setEncPrazo(e.target.value)} />
+                      </div>
+                    </div>
+
+                    <div className="card-footer-right">
+                      <button className="btn btn-primario" type="button" onClick={salvarEncaminhamento}>
+                        Encaminhar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* MODAL: MAIS AÇÕES */}
+              {showMais ? (
+                <div className="modal-overlay" role="dialog" aria-modal="true">
+                  <div className="modal-card">
+                    <div className="card-header-row">
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>Mais ações</div>
+                      <button className="btn btn-secundario" type="button" onClick={() => setShowMais(false)}>
+                        Fechar
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <button
+                        className="btn btn-primario"
+                        type="button"
+                        onClick={() => {
+                          setInnerTab("ficha");
+                          setShowMais(false);
+                        }}
+                        style={{ justifyContent: "space-between", display: "flex" }}
+                      >
+                        <span>Ver Ficha Única (Usuário/Família)</span>
+                        <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                      </button>
+
+                      <button
+                        className="btn btn-secundario"
+                        type="button"
+                        onClick={() => {
+                          setShowMais(false);
+                          abrirModalEncaminhamento();
+                        }}
+                        style={{ justifyContent: "space-between", display: "flex" }}
+                      >
+                        <span>Encaminhar para rede (sem atendimento)</span>
+                        <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                      </button>
+
+                      <button
+                        className="btn btn-secundario"
+                        type="button"
+                        onClick={() => {
+                          setShowMais(false);
+                          flash("Upload MVP em breve.");
+                        }}
+                        style={{ justifyContent: "space-between", display: "flex" }}
+                      >
+                        <span>Anexar documento</span>
+                        <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                      </button>
+
+                      {encSolicitado && canAprovar ? (
+                        <>
+                          <button
+                            className="btn btn-primario"
+                            type="button"
+                            onClick={() => {
+                              setShowMais(false);
+                              aprovarEncerramento();
+                            }}
+                            style={{ justifyContent: "space-between", display: "flex" }}
+                          >
+                            <span>Aprovar encerramento</span>
+                            <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                          </button>
+                          <button
+                            className="btn btn-secundario"
+                            type="button"
+                            onClick={() => {
+                              setShowMais(false);
+                              recusarEncerramento();
+                            }}
+                            style={{ justifyContent: "space-between", display: "flex" }}
+                          >
+                            <span>Recusar encerramento</span>
+                            <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                          </button>
+                        </>
+                      ) : canSolicitar && !encSolicitado ? (
+                        <button
+                          className="btn btn-secundario"
+                          type="button"
+                          onClick={() => {
+                            setShowMais(false);
+                            solicitarEncerramento();
+                          }}
+                          style={{ justifyContent: "space-between", display: "flex" }}
+                        >
+                          <span>{encRecusado ? "Solicitar encerramento novamente" : "Solicitar encerramento"}</span>
+                          <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                        </button>
+                      ) : encSolicitado ? (
+                        <div className="texto-suave" style={{ fontWeight: 900, padding: 10 }}>
+                          Encerramento já solicitado — aguardando aprovação.
+                        </div>
+                      ) : isG ? (
+                        <button
+                          className="btn btn-secundario"
+                          type="button"
+                          onClick={() => {
+                            setShowMais(false);
+                            encerrarCasoDiretoGestor();
+                          }}
+                          style={{ justifyContent: "space-between", display: "flex" }}
+                        >
+                          <span>Encerrar caso (gestor)</span>
+                          <span style={{ fontWeight: 900, opacity: 0.85 }}>→</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+
+        {/* MODAL: Encerramento / Recusa */}
+        {encCloseOpen ? (
+          <div className="modal-overlay" role="dialog" aria-modal="true">
+            <div className="modal-card">
+              <div className="modal-header">
+                <div className="modal-title">
+                  {encCloseMode === "recusar" ? "Recusar encerramento" : encCloseMode === "aprovar" ? "Aprovar encerramento" : encCloseMode === "direto" ? "Encerrar caso" : "Solicitar encerramento"}
+                </div>
+                <button className="btn btn-secundario" type="button" onClick={() => setEncCloseOpen(false)}>
+                  Fechar
+                </button>
+              </div>
+
+              <div className="modal-body">
+                <label className="label">{encCloseMode === "recusar" ? "Motivo da recusa (curto)" : "Motivo (curto)"}</label>
+                <input className="input" value={encCloseMotivo} onChange={(e) => setEncCloseMotivo(e.target.value)} />
+
+                {encCloseMode !== "recusar" ? (
+                  <>
+                    <div style={{ height: 10 }} />
+                    <label className="label">Resumo final (curto)</label>
+                    <textarea className="input" style={{ minHeight: 110 }} value={encCloseResumo} onChange={(e) => setEncCloseResumo(e.target.value)} />
+                  </>
+                ) : null}
+
+                {(encCloseMode === "direto" || encCloseMode === "aprovar") && (qualStatus?.items?.length || 0) ? (
+                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(2,6,23,.06)" }}>
+                    <div style={{ fontWeight: 900 }}>Qualidade do encerramento</div>
+                    <div className="texto-suave" style={{ marginTop: 6 }}>
+                      {(qualStatus.items || []).filter((it) => Boolean(qualMap && qualMap[it])).length}/{(qualStatus.items || []).length} itens concluídos.
+                      {(qualStatus.items || []).filter((it) => !Boolean(qualMap && qualMap[it])).length
+                        ? " Checklist incompleto: para encerrar, justifique a exceção."
+                        : " Checklist completo ✅"}
+                    </div>
+
+                    {(qualStatus.items || []).filter((it) => !Boolean(qualMap && qualMap[it])).length ? (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="texto-suave">Faltando:</div>
+                        <ul style={{ margin: "6px 0 0 18px" }}>
+                          {(qualStatus.items || [])
+                            .filter((it) => !Boolean(qualMap && qualMap[it]))
+                            .map((it) => (
+                              <li key={it}>{it}</li>
+                            ))}
+                        </ul>
+
+                        <div style={{ height: 10 }} />
+                        <label className="label">Justificativa da exceção (obrigatório)</label>
+                        <textarea
+                          className="input"
+                          style={{ minHeight: 74 }}
+                          value={encQualJust}
+                          onChange={(e) => setEncQualJust(e.target.value)}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button className="btn btn-secundario" type="button" onClick={() => setEncCloseOpen(false)}>
+                  Cancelar
+                </button>
+                <button
+                  className="btn btn-primario"
+                  type="button"
+                  onClick={() => {
+                    if (!sel) return;
+                    const motivo = String(encCloseMotivo || "").trim();
+                    if (!motivo) return flash("Informe um motivo curto.");
+                    if (encCloseMode === "recusar") {
+                      recusarEncerramentoCreasCase(sel.id, motivo, usuarioLogado);
+                      setCases(getCreasCases());
+                      setEncCloseOpen(false);
+                      flash("Encerramento recusado ❌ O técnico deve continuar o caso.");
+                      return;
+                    }
+                    const resumo = String(encCloseResumo || "").trim() || "—";
+
+                    // Qualidade (checklist de encerramento) — snapshot do momento
+                    const stQ = getCreasEncerramentoChecklistStatusForCase(sel);
+                    const snap = {};
+                    (stQ?.items || []).forEach((it) => {
+                      snap[it] = Boolean(qualMap && qualMap[it]);
+                    });
+                    const missing = (stQ?.items || []).filter((it) => !snap[it]);
+                    const complete = missing.length === 0;
+
+                    // auto-salva o checklist antes de ações de encerramento/solicitação
+                    if ((stQ?.items || []).length) {
+                      saveCreasCaseQualityChecklist(sel.id, snap, usuarioLogado);
+                    }
+
+                    // Encerrar direto / Aprovar: permite exceção com justificativa
+                    if (encCloseMode === "direto" || encCloseMode === "aprovar") {
+                      if (!complete) {
+                        const j = String(encQualJust || "").trim();
+                        if (!j) {
+                          setInnerTab("resumo");
+                          flash("Checklist incompleto: informe a justificativa da exceção (aba Resumo).");
+                          return;
+                        }
+                        closeCreasCase(sel.id, motivo, resumo, usuarioLogado, {
+                          qualidade_checklist_snapshot: snap,
+                          qualidade_excecao: true,
+                          qualidade_excecao_motivo: j,
+                        });
+                      } else {
+                        closeCreasCase(sel.id, motivo, resumo, usuarioLogado, {
+                          qualidade_checklist_snapshot: snap,
+                          qualidade_excecao: false,
+                          qualidade_excecao_motivo: null,
+                        });
+                      }
+
+                      setCases(getCreasCases());
+                      setEncCloseOpen(false);
+                      flash(encCloseMode === "aprovar" ? "Encerramento aprovado ✅ Caso encerrado." : "Caso encerrado ✅");
+                      return;
+                    }
+
+                    // Solicitar: exige checklist completo (sem exceção)
+                    if (encCloseMode !== "recusar" && (stQ?.items || []).length && !complete) {
+                      setInnerTab("resumo");
+                      flash("Complete o checklist de qualidade antes de solicitar encerramento.");
+                      return;
+                    }
+
+                    solicitarEncerramentoCreasCase(sel.id, motivo, resumo, usuarioLogado);
+                    setCases(getCreasCases());
+                    setEncCloseOpen(false);
+                    flash("Solicitação enviada ✅ A coordenação deve aprovar.");
+                  }}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* MODAL: Motivo da pausa */}
+        {pauseOpen ? (
+          <div className="modal-overlay" role="dialog" aria-modal="true">
+            <div className="modal-card">
+              <div className="modal-header">
+                <div className="modal-title">Registrar motivo da pausa</div>
+                <button className="btn btn-secundario" type="button" onClick={() => setPauseOpen(false)}>
+                  Fechar
+                </button>
+              </div>
+              <div className="modal-body">
+                <label className="label">Motivo (curto)</label>
+                <input className="input" value={pauseMotivo} onChange={(e) => setPauseMotivo(e.target.value)} />
+              </div>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button className="btn btn-secundario" type="button" onClick={() => setPauseOpen(false)}>
+                  Cancelar
+                </button>
+                <button
+                  className="btn btn-primario"
+                  type="button"
+                  onClick={() => {
+                    if (!sel) return;
+                    const motivo = String(pauseMotivo || "").trim();
+                    if (!motivo) return flash("Informe um motivo curto.");
+                    addTimeline(sel.id, { tipo: "pausa", texto: `Motivo da pausa: ${motivo}`, por: usuarioLogado?.nome || "—" });
+                    setCases(getCreasCases());
+                    setPauseOpen(false);
+                    flash("Registrado ✅");
+                  }}
+                >
+                  Registrar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+    </div>
+  );
+}

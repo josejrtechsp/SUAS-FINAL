@@ -1,0 +1,557 @@
+import React, { useMemo, useState } from "react";
+import "./Portal.css";
+
+export default function PreLoginPage({ onEntrar }) {
+  const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState("federal"); // federal | sp
+
+  const updatesFederal = useMemo(
+    () => [
+      {
+        tag: "CNAS/MDS",
+        titulo:
+          "Resolução CNAS/MDS nº 220 (25/11/2025) — Diretrizes do Prontuário Eletrônico do SUAS",
+        resumo:
+          "Diretrizes para prontuário eletrônico no SUAS (base para padronização e qualidade do registro).",
+        data: "26/11/2025",
+        url: "https://blog.mds.gov.br/redesuas/resolucao-cnas-mds-no-220-de-25-de-novembro-de-2025/",
+      },
+      {
+        tag: "MDS",
+        titulo: "Portaria MDS nº 1.136 (04/12/2025)",
+        resumo:
+          "Ato normativo recente do MDS. Utilize como referência de atualização regulatória no SUAS.",
+        data: "05/12/2025",
+        url: "https://www.gov.br/mds/pt-br/acesso-a-informacao/legislacao/portaria/portaria-mds-no-1-136-de-4-de-dezembro-de-2025",
+      },
+      {
+        tag: "FNAS",
+        titulo: "FNAS — prazos/critério do Selo FNAS e verificações do AgilizaSUAS",
+        resumo:
+          "Atualização de prazos e critérios: verificação e concessão do Selo em 2026, exigências e execução mínima.",
+        data: "2025/2026",
+        url: "https://fnas.mds.gov.br/fnas-divulga-novos-prazos-para-apuracao-e-concessao-do-selo-fnas/",
+      },
+      {
+        tag: "SNAS/MDS",
+        titulo:
+          "Portaria SNAS/MDS nº 47 (25/04/2025) — itens financiáveis com recursos SUAS (fundo a fundo)",
+        resumo:
+          "Lista padronizada de veículos/equipamentos/materiais permanentes aptos à aquisição com recursos do SUAS.",
+        data: "29/04/2025",
+        url: "https://fnas.mds.gov.br/nova-portaria-atualiza-lista-de-itens-que-podem-ser-adquiridos-com-recursos-do-suas/",
+      },
+      {
+        tag: "MDS/INSS",
+        titulo:
+          "Portaria Conjunta MDS/INSS nº 34 (09/10/2025) — regras do BPC",
+        resumo:
+          "Regras e procedimentos para requerimento, concessão, manutenção e revisão do BPC.",
+        data: "10/10/2025",
+        url: "https://www.gov.br/inss/pt-br/centrais-de-conteudo/legislacao/portarias-conjuntas/2025/ptcj34mds-inss.pdf",
+      },
+    ],
+    []
+  );
+
+  const updatesSP = useMemo(
+    () => [
+      {
+        tag: "CIB/SP",
+        titulo:
+          "Portaria CIB/SP nº 07 (25/07/2025) — Vigilância Socioassistencial (prazo de Plano de Ação)",
+        resumo:
+          "Pactuação estadual (SP) prorrogando prazo para apresentação do Plano de Ação da Vigilância Socioassistencial.",
+        data: "07/2025",
+        url: "https://www.desenvolvimentosocial.sp.gov.br/wp-content/uploads/2025/08/port--07-julho-2025.pdf",
+      },
+      {
+        tag: "DOE/SP",
+        titulo:
+          "Portaria (29/05/2025) — suplementação FEAS (Fundo Estadual de Assistência Social)",
+        resumo:
+          "Exemplo de norma estadual sobre cofinanciamento/gestão do FEAS e pactuação de recursos.",
+        data: "30/05/2025",
+        url: "https://www.doe.sp.gov.br/executivo/secretaria-de-desenvolvimento-social/portaria-de-29-de-maio-de-2025-20250529112012141112375",
+      },
+    ],
+    []
+  );
+
+  const atualizacoes = useMemo(() => {
+    const base = filtro === "sp" ? updatesSP : updatesFederal;
+    const q = busca.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((u) =>
+      (u.titulo + " " + u.resumo + " " + u.tag).toLowerCase().includes(q)
+    );
+  }, [busca, filtro, updatesFederal, updatesSP]);
+
+  const modulos = useMemo(
+    () => [
+      {
+        icone: "🏠",
+        titulo: "CRAS (PAIF / SCFV / encaminhamentos)",
+        texto:
+          "Padroniza triagem, acompanhamento familiar e encaminhamentos. Formulários guiados e histórico para reduzir retrabalho e melhorar continuidade.",
+      },
+      {
+        icone: "🧾",
+        titulo: "CREAS (PAEFI / violações / medidas)",
+        texto:
+          "Organiza casos com maior complexidade com etapas, prazos e registro estruturado para evitar perda de contexto e garantir continuidade.",
+      },
+      {
+        icone: "🚶‍♀️",
+        titulo: "Pop Rua (abordagem e gestão de caso)",
+        texto:
+          "Atendimento orientado por protocolo, registro rápido em campo, histórico recuperável e acompanhamento por etapas com devolutivas na rede.",
+      },
+      {
+        icone: "🛏️",
+        titulo: "Acolhimentos (unidades, vagas e movimentações)",
+        texto:
+          "Controle de acolhimentos, vagas, entradas/saídas e acompanhamento, com relatórios claros para gestão e rede de encaminhamento.",
+      },
+      {
+        icone: "🎯",
+        titulo: "Gestão e Coordenação (painel do município)",
+        texto:
+          "Visão em tempo real da rede: gargalos, produtividade, tempos por etapa, filas e indicadores por unidade, território e público atendido.",
+      },
+      {
+        icone: "🗺️",
+        titulo: "Vigilância Socioassistencial (território e evidências)",
+        texto:
+          "Indicadores e visão territorial para identificar concentrações de demanda, vazios assistenciais e prioridades de alocação de recursos.",
+      },
+      {
+        icone: "🤝",
+        titulo: "Terceiro Setor (parcerias e prestação de contas)",
+        texto:
+          "Área para OSCs registrarem execução, documentos e prestação de contas, com organização e transparência para acompanhamento.",
+      },
+      {
+        icone: "🏛️",
+        titulo: "Conselho (CMAS e controle social)",
+        texto:
+          "Acesso estruturado à informação certa: relatórios, metas, evidências e trilhas de auditoria para fortalecer fiscalização e deliberação.",
+      },
+      {
+        icone: "📚",
+        titulo: "Guia SUAS (normas, rotinas e modelos prontos)",
+        texto:
+          "Biblioteca prática dentro do portal: referências oficiais em linguagem simples, checklists e modelos por serviço — menos improviso na ponta.",
+      },
+    ],
+    []
+  );
+
+  const motivosLicenca = useMemo(
+    () => [
+      {
+        titulo: "Menos retrabalho e mais continuidade",
+        texto:
+          "Quando o registro é padronizado e o histórico é recuperável, a rede reduz repetição, melhora o fluxo e evita perda de informação.",
+        icone: "🧩",
+      },
+      {
+        titulo: "LGPD aplicada (mínimo necessário)",
+        texto:
+          "Perfis diferentes acessam níveis diferentes de informação. Isso protege dados sensíveis e reduz risco institucional.",
+        icone: "🛡️",
+      },
+      {
+        titulo: "Evidências para gestão e prestação de contas",
+        texto:
+          "Rastreabilidade (quem fez/quando/por quê) ajuda auditoria, relatórios, indicadores e decisões de política pública.",
+        icone: "📊",
+      },
+      {
+        titulo: "Rede entre municípios (consórcio)",
+        texto:
+          "Coordenação regional com visão agregada e comparativos, apoiando pactuações, fluxos e retornos entre municípios.",
+        icone: "🤝",
+      },
+      {
+        titulo: "Fluxo por etapas (alertas e prazos)",
+        texto:
+          "Cada caso avança por etapas claras, com validação, prazos e alertas de estagnação — a gestão enxerga onde está travando.",
+        icone: "⏱️",
+      },
+      {
+        titulo: "Transparência para OSC e Conselho",
+        texto:
+          "Organiza parcerias, documentos e acompanhamento com visão segura e objetiva para controle social e prestação de contas.",
+        icone: "🔎",
+      },
+    ],
+    []
+  );
+
+  const perfis = useMemo(
+    () => [
+      {
+        icone: "🧑‍💻",
+        titulo: "Técnicos",
+        texto:
+          "Registro rápido, formulários guiados, histórico do caso/família, encaminhamentos e devolutivas.",
+      },
+      {
+        icone: "🧭",
+        titulo: "Coordenação/Gestão",
+        texto:
+          "Painel do município, gargalos, produtividade e indicadores por unidade/território.",
+      },
+      {
+        icone: "🗓️",
+        titulo: "Administrativo",
+        texto:
+          "Organização de rotinas, agenda, eventos e suporte operacional à rede.",
+      },
+      {
+        icone: "💰",
+        titulo: "Financeiro/Prestação de contas",
+        texto:
+          "Relatórios e evidências para transparência, auditoria e controle.",
+      },
+      {
+        icone: "🏢",
+        titulo: "Terceiro setor (OSCs)",
+        texto:
+          "Registros e prestação de contas organizada, com trilhas e documentos por parceria.",
+      },
+      {
+        icone: "🏛️",
+        titulo: "Conselho (CMAS)",
+        texto:
+          "Acesso orientado a evidências e relatórios com rastreabilidade, fortalecendo o controle social.",
+      },
+    ],
+    []
+  );
+
+  const guiaTopicos = useMemo(
+    () => [
+      { icone: "📌", titulo: "Tipificação e serviços", texto: "O que é cada serviço, para quem é e como registrar sem improviso." },
+      { icone: "🧾", titulo: "RMA e relatórios", texto: "Como organizar registro para gerar evidência e prestação de contas." },
+      { icone: "🛡️", titulo: "LGPD na prática", texto: "Acesso por perfil, mínimo necessário, auditoria e boas práticas." },
+      { icone: "🧭", titulo: "Fluxos recomendados", texto: "Etapas, responsabilidades, devolutivas e validações na rede." },
+      { icone: "🤝", titulo: "Parcerias e OSC", texto: "Documentos, execução, acompanhamento e transparência." },
+      { icone: "🏛️", titulo: "Conselho e controle social", texto: "Relatórios e evidências certas para deliberação e fiscalização." },
+    ],
+    []
+  );
+
+  const guiaFiltrado = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return guiaTopicos;
+    return guiaTopicos.filter((t) =>
+      (t.titulo + " " + t.texto).toLowerCase().includes(q)
+    );
+  }, [busca, guiaTopicos]);
+
+  function irParaLogin() {
+    onEntrar?.();
+  }
+
+  return (
+    <div className="portal3-root">
+      <header className="portal3-topbar">
+        <div className="portal3-topbar-inner">
+          <div className="portal3-brand">
+            <div className="portal3-brand-tag">PORTAL SUAS</div>
+            <div className="portal3-brand-title">
+              Sistema <span className="portal3-brand-highlight">SUAS</span>
+            </div>
+            <div className="portal3-brand-sub">
+              Atualizações • legislação • protocolos • Guia SUAS • governança de dados • Inteligencia Social
+            </div>
+          </div>
+
+          <div className="portal3-actions">
+            <input
+              className="portal3-search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar no portal (MDS, CNAS, FNAS, Tipificação, NOB SUAS, CadÚnico, RMA, Prontuário SUAS...)"
+            />
+            <button
+              type="button"
+              className="portal3-btn-primary"
+              onClick={irParaLogin}
+            >
+              Acessar o painel
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="portal3-hero">
+        <div className="portal3-hero-inner">
+          <div>
+            <div className="portal3-kicker">
+              SUAS • CRAS • CREAS • Pop Rua • Acolhimentos • Gestão • Vigilância • Terceiro Setor • Conselho • Guia SUAS
+            </div>
+
+            <h1 className="portal3-title">
+              Organização do atendimento +{" "}
+              <span className="portal3-highlight">governança de dados</span> para
+              servir melhor o cidadão e proteger o poder público.
+            </h1>
+
+            <p className="portal3-lead">
+              Um portal público com referências oficiais e um sistema completo para <b>padronizar registros</b>, <b>fortalecer o trabalho em rede</b> e garantir <b>acesso por perfil (LGPD)</b> — do atendimento na ponta até a gestão, prestação de contas e controle social.
+              <br />
+              <b>Guia SUAS</b> dentro do portal: normas, rotinas e modelos prontos em linguagem simples para orientar equipes e reduzir improviso.
+            </p>
+
+            <div className="portal3-cta-row">
+              <button
+                type="button"
+                className="portal3-btn-primary portal3-btn-big"
+                onClick={irParaLogin}
+              >
+                Entrar no sistema
+              </button>
+              <a className="portal3-link" href="#modulos">
+                Conhecer os módulos ↓
+              </a>
+              <a className="portal3-link" href="#guia">
+                Guia SUAS e atualizações oficiais ↓
+              </a>
+            </div>
+
+            <div className="portal3-chips">
+              <span className="portal3-chip">Perfis e permissões (LGPD)</span>
+              <span className="portal3-chip">Rastreabilidade (auditoria)</span>
+              <span className="portal3-chip">Fluxo por etapas</span>
+              <span className="portal3-chip">Vigilância territorial</span>
+              <span className="portal3-chip">Rede intermunicipal (consórcio)</span>
+              <span className="portal3-chip">Terceiro setor e parcerias</span>
+              <span className="portal3-chip">Conselho e controle social</span>
+              <span className="portal3-chip">Guia SUAS (normas e rotinas)</span>
+            </div>
+          </div>
+
+          <div className="portal3-feature">
+            <div className="portal3-feature-title">
+              O que isso resolve no SUAS?
+            </div>
+            <ul className="portal3-bullets">
+              <li>Padroniza o atendimento em CRAS, CREAS, Pop Rua e Acolhimentos (evita “cada um faz do seu jeito”).</li>
+              <li>Reduz retrabalho e evita perda de informação com histórico contínuo do caso/família.</li>
+              <li>Organiza a rede: encaminhamentos, devolutivas e responsabilidades por etapa.</li>
+              <li>Gera indicadores e evidências para planejamento, auditoria e prestação de contas.</li>
+              <li>Protege dados sensíveis com LGPD aplicada (mínimo necessário) e trilha de auditoria.</li>
+              <li>Ajuda a gestão a enxergar gargalos, filas e tempos de atendimento, unidade por unidade.</li>
+            </ul>
+            <button
+              type="button"
+              className="portal3-btn-secondary"
+              onClick={irParaLogin}
+            >
+              Ver o painel (login)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="portal3-main">
+        <section className="portal3-section" id="modulos">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">
+              Um sistema, vários módulos — cada equipe vê só o que precisa.
+            </h2>
+            <p className="portal3-sub">
+              Da recepção e triagem ao acompanhamento e monitoramento: o Portal SUAS organiza o fluxo e garante rastreabilidade, sem expor informações indevidas.
+            </p>
+          </div>
+
+          <div className="portal3-cards-3">
+            {modulos.map((m, idx) => (
+              <div key={idx} className="portal3-card">
+                <div className="portal3-card-icon">{m.icone}</div>
+                <div className="portal3-card-title">{m.titulo}</div>
+                <div className="portal3-card-text">{m.texto}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="portal3-section" id="licenca">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">
+              Por que licenciar um software como este?
+            </h2>
+            <p className="portal3-sub">
+              Porque ele reduz custo invisível (retrabalho), melhora o atendimento e protege município/consórcio com governança de dados, evidências e LGPD.
+            </p>
+          </div>
+
+          <div className="portal3-cards-3">
+            {motivosLicenca.map((m, idx) => (
+              <div key={idx} className="portal3-card">
+                <div className="portal3-card-icon">{m.icone}</div>
+                <div className="portal3-card-title">{m.titulo}</div>
+                <div className="portal3-card-text">{m.texto}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">
+              Quer conhecer o sistema por dentro? Acesse o painel (login).
+            </div>
+            <button
+              type="button"
+              className="portal3-btn-primary"
+              onClick={irParaLogin}
+            >
+              Acessar o painel
+            </button>
+          </div>
+        </section>
+
+        <section className="portal3-section" id="como">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Como funciona na prática</h2>
+            <p className="portal3-sub">
+              O atendimento segue um fluxo simples, com etapas visíveis. Cada etapa tem responsáveis, prazos e validação, evitando que o caso “se perca” na rede.
+            </p>
+          </div>
+
+          <div className="portal3-card">
+            <ol className="portal3-steps">
+              <li><b>Recepção e triagem</b> — registro inicial e demanda principal.</li>
+              <li><b>Pré-cadastro / atualização</b> — dados essenciais e encaminhamento correto.</li>
+              <li><b>Avaliação</b> — escuta qualificada e identificação de vulnerabilidades.</li>
+              <li><b>Plano (PIA/ações)</b> — objetivos, estratégias e prazos.</li>
+              <li><b>Execução</b> — encaminhamentos e acompanhamento.</li>
+              <li><b>Monitoramento</b> — devolutivas, pendências e conclusão.</li>
+            </ol>
+
+            <div className="portal3-note">
+              Mensagem-chave: o sistema mostra cada caso como um <b>fluxo por etapas</b>. Se travar, sinaliza e registra motivo (falta de vaga, pendência de devolutiva, ausência do usuário, sobrecarga etc.).
+            </div>
+          </div>
+        </section>
+
+        <section className="portal3-section" id="perfis">
+          <div className="portal3-section-head">
+            <h2 className="portal3-h2">Cada perfil vê o que precisa — e nada além.</h2>
+            <p className="portal3-sub">
+              Perfis e permissões com LGPD aplicada na prática: mínimo necessário, rastreabilidade e auditoria.
+            </p>
+          </div>
+
+          <div className="portal3-cards-3">
+            {perfis.map((p, idx) => (
+              <div key={idx} className="portal3-card">
+                <div className="portal3-card-icon">{p.icone}</div>
+                <div className="portal3-card-title">{p.titulo}</div>
+                <div className="portal3-card-text">{p.texto}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="portal3-section" id="guia">
+          <div className="portal3-section-head portal3-section-head-row">
+            <div>
+              <h2 className="portal3-h2">Guia SUAS + Atualizações oficiais (biblioteca do portal)</h2>
+              <p className="portal3-sub">
+                Referências oficiais em linguagem simples: legislação, notas técnicas, orientações, protocolos, modelos prontos e materiais de apoio.
+              </p>
+            </div>
+
+            <div className="portal3-filter">
+              <button
+                type="button"
+                className={
+                  "portal3-pill" +
+                  (filtro === "federal" ? " portal3-pill-active" : "")
+                }
+                onClick={() => setFiltro("federal")}
+              >
+                Federal
+              </button>
+              <button
+                type="button"
+                className={
+                  "portal3-pill" +
+                  (filtro === "sp" ? " portal3-pill-active" : "")
+                }
+                onClick={() => setFiltro("sp")}
+              >
+                Estado SP
+              </button>
+            </div>
+          </div>
+
+          <div className="portal3-cards-3">
+            {guiaFiltrado.map((g, idx) => (
+              <div key={idx} className="portal3-card">
+                <div className="portal3-card-icon">{g.icone}</div>
+                <div className="portal3-card-title">{g.titulo}</div>
+                <div className="portal3-card-text">{g.texto}</div>
+              </div>
+            ))}
+          </div>
+
+          <div id="atualizacoes" style={{ height: 10 }} />
+
+          <div className="portal3-updates" style={{ marginTop: 12 }}>
+            {atualizacoes.map((u, idx) => (
+              <a
+                key={idx}
+                className="portal3-update"
+                href={u.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <div className="portal3-update-top">
+                  <span className="portal3-tag">{u.tag}</span>
+                  <span className="portal3-date">{u.data}</span>
+                </div>
+                <div className="portal3-update-title">{u.titulo}</div>
+                <div className="portal3-update-text">{u.resumo}</div>
+                <div className="portal3-update-link">Abrir documento →</div>
+              </a>
+            ))}
+
+            {atualizacoes.length === 0 && (
+              <div className="portal3-empty">
+                Nenhuma atualização encontrada para “{busca}”.
+              </div>
+            )}
+          </div>
+
+          <div className="portal3-cta-strip">
+            <div className="portal3-cta-strip-text">
+              Quer ver funcionando no seu município? Implantação guiada, treinamento por perfil e suporte contínuo.
+            </div>
+            <button
+              type="button"
+              className="portal3-btn-primary"
+              onClick={irParaLogin}
+            >
+              Acessar o painel
+            </button>
+          </div>
+        </section>
+
+        <footer className="portal3-footer">
+          <div className="portal3-footer-inner">
+            <span>
+              <strong>Portal SUAS</strong> • Inteligencia Social
+            </span>
+            <span className="portal3-footer-muted">
+              Conteúdo do portal em: PreLoginPage.jsx
+            </span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}
